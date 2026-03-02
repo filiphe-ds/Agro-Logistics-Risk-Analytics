@@ -65,5 +65,4 @@ Impacto Financeiro: Visibilidade clara do "Risco de Inação" em valores monetá
 🛠️ Como Executar (Em breve)
 (Nota: Este projeto está em fase ativa de desenvolvimento. Instruções de configuração de ambiente e requisitos de bibliotecas serão adicionados conforme as fases forem concluídas.)
 
-Desenvolvido por [Seu Nome/Filiphe]
-Transição de carreira para Data Science | Especialista em Logística Portuária
+Desenvolvido por [Filiphe]
