@@ -1,3 +1,4 @@
+import joblib
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
@@ -52,12 +53,31 @@ except Exception as e:
     st.error(f"Erro ao carregar dados do BigQuery: {e}")
     st.info("Certifique-se de que as suas credenciais estão configuradas no .env ou Secrets do Streamlit.")
 
-# 5. Simulador de Risco (ML Side)
-st.sidebar.header("🧠 Simulador de Risco (What-If)")
-st.sidebar.markdown("Ajuste as condições para ver o impacto no Delay Risk Score.")
-sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
-sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
+# 5. Simulador de Risco (Integração com ML)
+st.sidebar.header("🧠 Inteligência Artificial")
+try:
+    # Carrega o modelo treinado que você subiu para a pasta models/
+    model = joblib.load('models/modelo_risco_demurrage_v1.pkl')
+    
+    st.sidebar.markdown("Ajuste as condições para previsão via Random Forest.")
+    sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
+    sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
+    sim_nlp = st.sidebar.slider("Score NLP (Notícias)", 0.0, 1.0, 0.5)
 
-if st.sidebar.button("Calcular Risco"):
-    # Aqui depois chamaremos o model.predict() do seu arquivo .pkl
-    st.sidebar.success(f"Probabilidade de Atraso: {(sim_chuva*0.5 + sim_vento*0.3):.1f}%")
+    if st.sidebar.button("Prever Risco Real"):
+        # Prepara os dados para o modelo (precisa estar na mesma ordem das features do treino)
+        # ['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada']
+        input_data = pd.DataFrame([[sim_chuva, sim_vento, sim_nlp, 50000]], 
+                                   columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada'])
+        
+        prob = model.predict_proba(input_data)[0][1] # Pega a chance de ser classe 1 (atraso)
+        
+        if prob > 0.7:
+            st.sidebar.error(f"⚠️ RISCO ALTO: {prob:.1%}")
+        elif prob > 0.4:
+            st.sidebar.warning(f"🟡 RISCO MÉDIO: {prob:.1%}")
+        else:
+            st.sidebar.success(f"✅ RISCO BAIXO: {prob:.1%}")
+
+except Exception as e:
+    st.sidebar.info("Aguardando carregamento do modelo .pkl...")
