@@ -1,66 +1,66 @@
 Agro-Logistics Risk Analytics (v2.0) 🚢🌾
-Predictive intelligence to mitigate demurrage risks in the Port of Santos.
+Inteligência Preditiva para mitigação de riscos de demurrage no Porto de Santos.
 
 📌 1. Visão Geral
-O escoamento de commodities agrícolas (soja/milho) no Brasil enfrenta gargalos logísticos críticos. Fatores como chuvas em rotas de escoamento, filas de atracação e interrupções rodoviárias geram inoperabilidade e, consequentemente, multas diárias altíssimas conhecidas como Demurrage.
+O Agro-Logistics Risk Analytics antecipa gargalos logísticos críticos no escoamento de commodities agrícolas. Através da integração de dados meteorológicos reais, monitoramento de embarcações e processamento de linguagem natural (NLP), o sistema gera um Delay Risk Score para apoiar a tomada de decisão e evitar multas de demurrage.
 
-O Agro-Logistics Risk Analytics (v2.0) é um ecossistema de dados preditivo que antecipa o risco logístico. Ao cruzar previsões meteorológicas, dados de tráfego e o line-up de navios, o sistema fornece o lead time necessário para que operadores realizem manobras de carga antes que as multas ocorram.
+🏗️ 2. Arquitetura Tecnológica Atualizada
+Data Warehouse: Google BigQuery (Arquitetura Star Schema).
 
-🏗️ 2. Arquitetura Tecnológica (Modern Data Stack)
-O projeto utiliza uma arquitetura baseada em nuvem para garantir escalabilidade e automação:
+Data Engineering: Python, Pandas e extração via APIs (OpenWeather e Visual Crossing para histórico).
 
-Data Warehouse: Google BigQuery (Central de verdade e armazenamento histórico).
+Web Scraping: Captura automatizada do line-up de navios esperados no Porto de Santos.
 
-Data Engineering: Python para ingestão de APIs (OpenWeather, ANTAQ, Autoridade Portuária).
+AI & NLP: Google Gemini API para extração estruturada de entidades em boletins logísticos.
 
-AI & NLP: Google Gemini API para processamento de linguagem natural, extraindo dados não-estruturados de boletins de tráfego e comunicados portuários.
+Machine Learning: Scikit-Learn (Random Forest Classifier) com técnicas de balanceamento de classe e alvos probabilísticos.
 
-Machine Learning: Modelos supervisionados para cálculo do Delay Risk Score e projeção financeira de perdas.
-
-Visualization: Streamlit / Looker focado em tomadas de decisão executivas.
-
-🗺️ 3. Roadmap de Desenvolvimento
+🗺️ 3. Roadmap de Desenvolvimento (Status Atual)
 Fase 1: Fundação & Modelagem 🏗️
 [x] Definição do Escopo e PRD.
 
-[ ] Desenho do Modelo de Dados (Star Schema: Fato e Dimensões).
+[x] Desenho do Modelo de Dados (Star Schema: fato_clima, fato_lineup, fato_contingencias_nlp).
 
-[ ] Configuração do ambiente GCP (IAM, BigQuery, Cloud Functions).
+[x] Configuração do ambiente GCP (BigQuery Sandbox e autenticação via Service Account).
 
 Fase 2: Pipelines de Ingestão (Data Engineering) ⚙️
-[ ] Script extrator para API de Clima (foco em rotas críticas de escoamento).
+[x] Pipeline para API de Clima (Ingestão em tempo real e Backfilling histórico de 15 dias).
 
-[ ] Web Scraping para monitoramento do line-up de navios esperados.
+[x] Web Scraping para monitoramento do line-up de navios (Terminais: Alamoa, Ilha, etc.).
 
-[ ] Carga e transformação inicial no BigQuery.
+[x] Carga automatizada via Python (método WRITE_TRUNCATE para gestão de dados no Sandbox).
 
-Fase 3: Motor de PLN & Sentimento de Risco (AI Engineering) 🤖
-[ ] Integração com Gemini para "Leitura de Contingências".
+Fase 3: Motor de NLP & Inteligência Artificial 🤖
+[x] Integração funcional com Gemini 2.0 Flash para extração de JSON estruturado.
 
-[ ] Engenharia de Prompt para extração de entidades: [Data, Local, Evento, Nível de Risco].
+[ ] (Em progresso) Automação da varredura de notícias e boletins de tráfego/porto.
 
-[ ] Pipeline de automação para transformar texto bruto em JSON estruturado.
+[x] Engenharia de Prompt para extração de: entidade_evento, score_risco, impacto_estimado_horas e local_foco.
 
 Fase 4: Modelagem de Machine Learning (Data Science) 🧠
-[ ] Construção da Feature Store unificada.
+[x] Construção de Feature Store unificada via SQL Views no BigQuery.
 
-[ ] Treinamento de modelo preditivo (Target: Probabilidade de Atraso > X horas).
+[x] Treinamento de modelo Random Forest.
 
-[ ] Validação de métricas focadas em negócio (Precision/Recall para evitar falsos negativos).
+[x] Tratamento de Overfitting e Desbalanceamento de Classe (class_weight='balanced').
 
-Fase 5: Serving & Analytics Engineering 📊
-[ ] Dashboard interativo focado em "Ações Sugeridas".
+[x] Implementação de Target Probabilístico para simulação de cenários reais.
 
-[ ] Automação do ciclo de vida dos dados (Orquestração).
+Fase 5: Serving & Analytics 📊
+[ ] Dashboard interativo em Streamlit.
 
-[ ] Documentação técnica e técnica de negócios.
+[ ] Povoamento das tabelas dimensionais (dim_navio e dim_geografia_rota).
 
-🎯 4. KPIs de Sucesso
-Automação Total: Eliminação de processos manuais de coleta de dados.
+[ ] Deploy final e documentação de uso.
 
-Antecipação: Identificação de riscos logísticos com 5 a 7 dias de antecedência.
+🚀 Como Executar o MVP
+Configurar GCP: Garanta acesso ao BigQuery e crie o dataset logisticsdata.
 
-Impacto Financeiro: Visibilidade clara do "Risco de Inação" em valores monetários.
+Variáveis de Ambiente: Configure suas chaves de API (Gemini, Visual Crossing).
+
+Processamento: Execute os notebooks de extração para popular as tabelas fato.
+
+Treinamento: Rode o script de ML para gerar o arquivo .pkl do modelo preditivo.
 
 🛠️ Como Executar (Em breve)
 (Nota: Este projeto está em fase ativa de desenvolvimento. Instruções de configuração de ambiente e requisitos de bibliotecas serão adicionados conforme as fases forem concluídas.)
