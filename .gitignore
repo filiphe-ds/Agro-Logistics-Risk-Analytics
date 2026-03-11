@@ -1,0 +1,23 @@
+# Configurações e Segredos
+.env
+
+# Python e Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Modelos e arquivos de dados (opcional)
+# Caso queira subir seus arquivos de modelo (.pkl), comente a linha abaixo
+*.pkl
+
+# Logs e arquivos de sistema
+*.log
+.DS_Store
+Thumbs.db
