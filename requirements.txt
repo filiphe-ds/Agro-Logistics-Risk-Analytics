@@ -8,5 +8,7 @@ scikit-learn
 seaborn
 matplotlib
 joblib
-plotly
 python-dotenv
+db-dtypes
+streamlit
+google-auth
