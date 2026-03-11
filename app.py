@@ -5,17 +5,28 @@ from google.cloud import bigquery
 import plotly.express as px
 import os
 from dotenv import load_dotenv
+from google.oauth2 import service_account
 
-# 1. Configurações Iniciais
+# 1. Configurações Iniciais e Carregamento de Env
 load_dotenv()
 st.set_page_config(page_title="Agro-Logistics Risk Analytics", layout="wide")
 
-# Conexão BigQuery
-PROJECT_ID = os.getenv("PROJECT_ID")
-client = bigquery.Client(project=PROJECT_ID)
+# 2. Autenticação Inteligente (O segredo do Deploy)
+if "gcp_service_account" in st.secrets:
+    # No Cloud: usa os Secrets do Streamlit
+    info = st.secrets["gcp_service_account"]
+    credentials = service_account.Credentials.from_service_account_info(info)
+    client = bigquery.Client(credentials=credentials, project=info["project_id"])
+else:
+    # Local: usa o seu .env ou o login do gcloud no seu PC
+    PROJECT_ID = os.getenv("PROJECT_ID")
+    client = bigquery.Client(project=PROJECT_ID)
 
-@st.cache_data # Cache para não gastar quota do BigQuery a cada clique
+# --- REMOVI A SEGUNDA DEFINIÇÃO DE CLIENT QUE ESTAVA AQUI ---
+
+@st.cache_data
 def load_data():
+    # Certifique-se de que o nome da tabela está correto conforme seu dataset
     query = "SELECT * FROM `agrologisticsdata.logisticsdata.view_feature_store_ml`"
     return client.query(query).to_dataframe()
 
@@ -26,7 +37,7 @@ st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em 
 try:
     df = load_data()
 
-    # 2. KPIs Principais (Métricas)
+    # 3. KPIs Principais
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total de Navios", len(df))
@@ -37,26 +48,23 @@ try:
     with col4:
         st.metric("Risco Médio de Atraso", f"{df['nlp_risk_score'].mean()*100:.1f}%")
 
-    # 3. Visualização de Risco
+    # 4. Visualização de Risco
     st.subheader("📊 Análise de Risco por Terminal")
     fig = px.bar(df, x='terminal', y='quantidade_estimada', color='rain_feature',
                  title="Volume por Terminal vs. Intensidade de Chuva",
                  labels={'quantidade_estimada': 'Volume (Toneladas)', 'terminal': 'Terminal'})
     st.plotly_chart(fig, use_container_width=True)
 
-    # 4. Tabela de Monitorização (O que o operacional vê)
+    # 5. Tabela de Monitorização
     st.subheader("🔍 Monitor de Embarcações e Alertas")
-    # Destacar linhas com risco alto (Simulação de Negócio)
     st.dataframe(df.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
 
 except Exception as e:
     st.error(f"Erro ao carregar dados do BigQuery: {e}")
-    st.info("Certifique-se de que as suas credenciais estão configuradas no .env ou Secrets do Streamlit.")
 
-# 5. Simulador de Risco (Integração com ML)
+# 6. Simulador de Risco (ML Side)
 st.sidebar.header("🧠 Inteligência Artificial")
 try:
-    # Carrega o modelo treinado que você subiu para a pasta models/
     model = joblib.load('models/modelo_risco_demurrage_v1.pkl')
     
     st.sidebar.markdown("Ajuste as condições para previsão via Random Forest.")
@@ -65,12 +73,10 @@ try:
     sim_nlp = st.sidebar.slider("Score NLP (Notícias)", 0.0, 1.0, 0.5)
 
     if st.sidebar.button("Prever Risco Real"):
-        # Prepara os dados para o modelo (precisa estar na mesma ordem das features do treino)
-        # ['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada']
         input_data = pd.DataFrame([[sim_chuva, sim_vento, sim_nlp, 50000]], 
                                    columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada'])
         
-        prob = model.predict_proba(input_data)[0][1] # Pega a chance de ser classe 1 (atraso)
+        prob = model.predict_proba(input_data)[0][1]
         
         if prob > 0.7:
             st.sidebar.error(f"⚠️ RISCO ALTO: {prob:.1%}")
@@ -80,4 +86,4 @@ try:
             st.sidebar.success(f"✅ RISCO BAIXO: {prob:.1%}")
 
 except Exception as e:
-    st.sidebar.info("Aguardando carregamento do modelo .pkl...")
+    st.sidebar.info(f"Aguardando modelo... ({e})")
