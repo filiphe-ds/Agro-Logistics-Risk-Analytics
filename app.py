@@ -69,20 +69,16 @@ try:
     
     st.sidebar.markdown("Ajuste as condições para previsão real.")
     
-    # Criando sliders para todas as variáveis do treino
+    # Criando os sliders
     sim_carga = st.sidebar.slider("Volume do Navio (Toneladas)", 5000, 150000, 50000)
     sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
     sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
     sim_nlp = st.sidebar.slider("Score de Risco NLP (IA)", 0.0, 1.0, 0.5)
 
     if st.sidebar.button("Prever Risco Real"):
-        # ORDEM CRÍTICA: Deve ser idêntica ao notebook de treino
-        # ['quantidade_estimada', 'rain_feature', 'wind_feature', 'nlp_risk_score']
-        input_data = pd.DataFrame([[sim_carga, sim_chuva, sim_vento, sim_nlp]], 
-                                   columns=['quantidade_estimada', 'rain_feature', 'wind_feature', 'nlp_risk_score'])
-        
-        # Debug visual para garantir que a ordem está certa
-        # st.sidebar.write("Dados enviados ao modelo:", input_data)
+        # CORREÇÃO: Usando nomes e ordem idênticos aos do notebook
+        input_data = pd.DataFrame([[sim_chuva, sim_vento, sim_nlp, sim_carga]], 
+                                   columns=['precipitacao_mm', 'velocidade_vento', 'score_risco', 'quantidade_estimada'])
         
         prob = model.predict_proba(input_data)[0][1]
         
@@ -94,4 +90,4 @@ try:
             st.sidebar.success(f"✅ RISCO BAIXO: {prob:.1%}")
 
 except Exception as e:
-    st.sidebar.info(f"Erro ao carregar modelo: {e}")
+    st.sidebar.error(f"Erro ao carregar modelo: {e}")
