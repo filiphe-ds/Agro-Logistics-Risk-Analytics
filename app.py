@@ -69,16 +69,16 @@ try:
     
     st.sidebar.markdown("Ajuste as condições para previsão real.")
     
-    # Criando os sliders
     sim_carga = st.sidebar.slider("Volume do Navio (Toneladas)", 5000, 150000, 50000)
     sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
     sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
     sim_nlp = st.sidebar.slider("Score de Risco NLP (IA)", 0.0, 1.0, 0.5)
 
     if st.sidebar.button("Prever Risco Real"):
-        # CORREÇÃO: Usando nomes e ordem idênticos aos do notebook
+        # ORDEM E NOMES EXATOS EXIGIDOS PELO MODELO:
+        # O erro indicou: rain_feature, wind_feature, nlp_risk_score, quantidade_estimada
         input_data = pd.DataFrame([[sim_chuva, sim_vento, sim_nlp, sim_carga]], 
-                                   columns=['precipitacao_mm', 'velocidade_vento', 'score_risco', 'quantidade_estimada'])
+                                   columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada'])
         
         prob = model.predict_proba(input_data)[0][1]
         
