@@ -1,0 +1,5 @@
+f:
+
+Cd F:\projetos_python\AgroLogisticsRiskAnalyticsv2
+
+python -m streamlit run app.py

@@ -1,5 +1,7 @@
 # Configurações e Segredos
+*.json
 .env
+secrets.txt
 
 # Python e Cache
 __pycache__/

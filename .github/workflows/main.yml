@@ -1,0 +1,37 @@
+name: Data Robot - Agro Logistics
+
+on:
+  schedule:
+    # Roda a cada 1 hora (no minuto 0)
+    - cron: '0 * * * *'
+  workflow_dispatch: # Permite que você clique em um botão para rodar na hora que quiser
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+
+      - name: Rodar o Robô de Dados
+        env:
+          # Aqui conectamos os Segredos do GitHub ao código
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+          VC_API_KEY: ${{ secrets.VC_API_KEY }}
+          # O Google Cloud precisa deste segredo para se autenticar
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_JSON }}
+        run: |
+          # Criamos um arquivo temporário com o JSON para o BigQuery usar
+          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > gcp_key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json
+          python worker.py
+          rm gcp_key.json
