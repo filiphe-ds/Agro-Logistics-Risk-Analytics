@@ -1,7 +1,8 @@
-import joblib # Adicione no topo com os outros imports
+import joblib
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
+from google.oauth2 import service_account # <--- Novo Import
 import plotly.express as px
 import os
 from dotenv import load_dotenv
@@ -10,13 +11,26 @@ from dotenv import load_dotenv
 load_dotenv()
 st.set_page_config(page_title="Agro-Logistics Risk Analytics", layout="wide")
 
-# Conexão BigQuery
-PROJECT_ID = os.getenv("PROJECT_ID")
-client = bigquery.Client(project=PROJECT_ID)
+# --- CONEXÃO INTELIGENTE (STREAMLIT CLOUD vs LOCAL) ---
+def get_bigquery_client():
+    # Se estiver no Streamlit Cloud, usa st.secrets
+    if "gcp_service_account" in st.secrets:
+        info = st.secrets["gcp_service_account"]
+        credentials = service_account.Credentials.from_service_account_info(info)
+        return bigquery.Client(credentials=credentials, project=info["project_id"])
+    
+    # Se estiver local, tenta carregar do .env ou ADC
+    else:
+        project_id = os.getenv("PROJECT_ID")
+        return bigquery.Client(project=project_id)
 
-@st.cache_data # Cache para não gastar quota do BigQuery a cada clique
+client = get_bigquery_client()
+
+@st.cache_data
 def load_data():
-    query = "SELECT * FROM `agrologisticsdata.logisticsdata.view_feature_store_ml`"
+    # Usamos o Project ID dinâmico para evitar erros de permissão
+    project = client.project 
+    query = f"SELECT * FROM `{project}.logisticsdata.view_feature_store_ml`"
     return client.query(query).to_dataframe()
 
 # --- INTERFACE ---
