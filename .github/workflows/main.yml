@@ -20,7 +20,8 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
       - name: Rodar o Robô de Dados
         env:
