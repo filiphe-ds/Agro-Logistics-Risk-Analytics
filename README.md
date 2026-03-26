@@ -48,4 +48,3 @@ GCP_SA_JSON: Conteúdo do JSON da sua Service Account do Google.
 
 👨‍💻 Autor
 Filiphe - Data Science & Logistics Engineering
-[Seu LinkedIn aqui] | [Seu Portfólio aqui]
