@@ -32,22 +32,24 @@ client = get_bigquery_client()
 
 @st.cache_data
 def load_data():
-    project = client.project
-    # A mágica está no QUALIFY ROW_NUMBER():
-    # Ele agrupa por ship_id (PARTITION) e ordena pela data de inserção mais recente (ORDER BY DESC)
-    # O "= 1" garante que só pegamos a última versão de cada navio
+    project = client.project 
     query = f"""
-        SELECT * FROM `{project}.logisticsdata.view_feature_store_ml`
+        SELECT *, 
+               FORMAT_TIMESTAMP('%d/%m/%Y %H:%M', inserido_em, 'America/Sao_Paulo') as data_formatada
+        FROM `{project}.logisticsdata.view_feature_store_ml`
         WHERE ship_id IS NOT NULL
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY ship_id 
-            ORDER BY inserido_em DESC
-        ) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ship_id ORDER BY inserido_em DESC) = 1
     """
-    return client.query(query).to_dataframe()
+    df = client.query(query).to_dataframe()
+    return df
 
 # --- INTERFACE ---
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
+
+if not df.empty:
+    ultima_atualizacao = df['data_formatada'].iloc[0]
+    st.info(f"🤖 **Status do Sistema:** Robô operando normalmente. Última coleta: {ultima_atualizacao}")
+
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
 try:
