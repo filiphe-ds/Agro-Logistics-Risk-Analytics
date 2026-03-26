@@ -32,9 +32,18 @@ client = get_bigquery_client()
 
 @st.cache_data
 def load_data():
-    # Pega o ID do projeto que está dentro do cliente que acabamos de criar
-    project = client.project 
-    query = f"SELECT * FROM `{project}.logisticsdata.view_feature_store_ml`"
+    project = client.project
+    # A mágica está no QUALIFY ROW_NUMBER():
+    # Ele agrupa por ship_id (PARTITION) e ordena pela data de inserção mais recente (ORDER BY DESC)
+    # O "= 1" garante que só pegamos a última versão de cada navio
+    query = f"""
+        SELECT * FROM `{project}.logisticsdata.view_feature_store_ml`
+        WHERE ship_id IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY ship_id 
+            ORDER BY inserido_em DESC
+        ) = 1
+    """
     return client.query(query).to_dataframe()
 
 # --- INTERFACE ---
