@@ -45,20 +45,27 @@ def load_data():
 
 # --- INTERFACE ---
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
-
-if not df.empty:
-    ultima_atualizacao = df['data_formatada'].iloc[0]
-    st.info(f"🤖 **Status do Sistema:** Robô operando normalmente. Última coleta: {ultima_atualizacao}")
-
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
 try:
+    # 1. Primeiro carregamos os dados
     df = load_data()
 
-    # 2. KPIs Principais (Métricas)
+    # 2. Agora que o 'df' existe, mostramos o status do sistema no topo
+    if not df.empty:
+        # Pegamos a data formatada que a nossa nova Query SQL gerou
+        ultima_atualizacao = df['data_formatada'].iloc[0]
+        st.info(f"🤖 **Status do Sistema:** Robô operando normalmente. Última coleta: {ultima_atualizacao}")
+
+     # 3. KPIs Principais (Métricas)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total de Navios", len(df))
+    # ... resto das colunas e gráficos ...
+
+except Exception as e:
+    st.error(f"Erro ao carregar dados do BigQuery: {e}")
+    st.info("Certifique-se de que as suas credenciais estão configuradas nos Secrets do Streamlit.")
     with col2:
         st.metric("Chuva Média (Santos)", f"{df['rain_feature'].mean():.1f} mm")
     with col3:
