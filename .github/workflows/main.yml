@@ -25,14 +25,19 @@ jobs:
 
       - name: Rodar o Robô de Dados
         env:
-          # Aqui conectamos os Segredos do GitHub ao código
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           VC_API_KEY: ${{ secrets.VC_API_KEY }}
-          # O Google Cloud precisa deste segredo para se autenticar
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_JSON }}
+          # Passamos o segredo direto para uma variável de ambiente
+          GCP_JSON_DATA: ${{ secrets.GCP_SA_JSON }}
         run: |
-          # Criamos um arquivo temporário com o JSON para o BigQuery usar
-          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > gcp_key.json
+          # O "echo" com aspas duplas preserva a estrutura do JSON
+          echo "$GCP_JSON_DATA" > gcp_key.json
+          
+          # Definimos a variável que o Google Cloud SDK procura automaticamente
           export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json
+          
+          # Roda o robô
           python worker.py
+          
+          # Remove a chave por segurança após o uso
           rm gcp_key.json
