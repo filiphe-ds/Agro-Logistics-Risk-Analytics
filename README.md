@@ -1,68 +1,50 @@
-Agro-Logistics Risk Analytics (v2.0) 🚢🌾
-Inteligência Preditiva para mitigação de riscos de demurrage no Porto de Santos.
+🚢 Agro-Logistics Risk Analytics v2.0
+Sistema inteligente de monitoramento e previsão de risco de Demurrage para operações de exportação agrícola no Porto de Santos. O projeto integra raspagem de dados em tempo real, automação em nuvem e Inteligência Artificial.
 
-📌 1. Visão Geral
-O Agro-Logistics Risk Analytics antecipa gargalos logísticos críticos no escoamento de commodities agrícolas. Através da integração de dados meteorológicos reais, monitoramento de embarcações e processamento de linguagem natural (NLP), o sistema gera um Delay Risk Score para apoiar a tomada de decisão e evitar multas de demurrage.
+🚀 Arquitetura do Projeto
+O sistema opera como um pipeline de dados ponta a ponta:
 
-🏗️ 2. Arquitetura Tecnológica Atualizada
-Data Warehouse: Google BigQuery (Arquitetura Star Schema).
+Coleta Automatizada (The Robot): Um script em Python (worker.py) realiza a extração de dados do Line-up oficial do Porto de Santos e coleta previsões climáticas via API do Visual Crossing.
 
-Data Engineering: Python, Pandas e extração via APIs (OpenWeather e Visual Crossing para histórico).
+Automação (CI/CD): O GitHub Actions executa o robô de hora em hora, garantindo que o banco de dados esteja sempre atualizado sem intervenção humana.
 
-Web Scraping: Captura automatizada do line-up de navios esperados no Porto de Santos.
+Data Warehouse: Os dados são processados, limpos e armazenados no Google BigQuery, organizados em tabelas de fatos e visões otimizadas para ML.
 
-AI & NLP: Google Gemini API para extração estruturada de entidades em boletins logísticos.
+Inteligência Artificial: Um modelo de Random Forest (Scikit-Learn) analisa variáveis como volume de carga, precipitação e ventos para prever a probabilidade de atrasos.
 
-Machine Learning: Scikit-Learn (Random Forest Classifier) com técnicas de balanceamento de classe e alvos probabilísticos.
+Interface: Um dashboard interativo em Streamlit permite a visualização de KPIs operacionais e simulações de risco em tempo real.
 
-🗺️ 3. Roadmap de Desenvolvimento (Status Atual)
-Fase 1: Fundação & Modelagem 🏗️
-[x] Definição do Escopo e PRD.
+🛠️ Tech Stack
+Linguagem: Python 3.11
 
-[x] Desenho do Modelo de Dados (Star Schema: fato_clima, fato_lineup, fato_contingencias_nlp).
+Data Prep: Pandas, NumPy, BeautifulSoup4
 
-[x] Configuração do ambiente GCP (BigQuery Sandbox e autenticação via Service Account).
+Cloud: Google Cloud Platform (BigQuery)
 
-Fase 2: Pipelines de Ingestão (Data Engineering) ⚙️
-[x] Pipeline para API de Clima (Ingestão em tempo real e Backfilling histórico de 15 dias).
+Orquestração: GitHub Actions (Cron Jobs)
 
-[x] Web Scraping para monitoramento do line-up de navios (Terminais: Alamoa, Ilha, etc.).
+Machine Learning: Scikit-Learn, Joblib
 
-[x] Carga automatizada via Python (método WRITE_TRUNCATE para gestão de dados no Sandbox).
+Visualização: Streamlit, Plotly
 
-Fase 3: Motor de NLP & Inteligência Artificial 🤖
-[x] Integração funcional com Gemini 2.0 Flash para extração de JSON estruturado.
+📊 Funcionalidades
+✅ Monitor de Line-up: Lista atualizada de navios esperados no porto.
 
-[ ] (Em progresso) Automação da varredura de notícias e boletins de tráfego/porto.
+✅ Radar Climático: Monitoramento de precipitação e ventos em pontos estratégicos (Canal do Porto, Serra e Fundeio).
 
-[x] Engenharia de Prompt para extração de: entidade_evento, score_risco, impacto_estimado_horas e local_foco.
+✅ Simulador de IA: Interface lateral para prever riscos baseados em cenários customizados.
 
-Fase 4: Modelagem de Machine Learning (Data Science) 🧠
-[x] Construção de Feature Store unificada via SQL Views no BigQuery.
+✅ Alertas Críticos: Identificação automática de condições climáticas que podem paralisar a operação.
 
-[x] Treinamento de modelo Random Forest.
+⚙️ Configuração de Segredos
+O projeto utiliza Secrets do GitHub e do Streamlit para proteger credenciais sensíveis. Nunca suba arquivos .json ou .env para o repositório.
 
-[x] Tratamento de Overfitting e Desbalanceamento de Classe (class_weight='balanced').
+Variáveis Necessárias:
+PROJECT_ID: ID do seu projeto no Google Cloud.
 
-[x] Implementação de Target Probabilístico para simulação de cenários reais.
+VC_API_KEY: Chave da API Visual Crossing.
 
-Fase 5: Serving & Analytics 📊
-[ ] Dashboard interativo em Streamlit.
+GCP_SA_JSON: Conteúdo do JSON da sua Service Account do Google.
 
-[ ] Povoamento das tabelas dimensionais (dim_navio e dim_geografia_rota).
-
-[ ] Deploy final e documentação de uso.
-
-🚀 Como Executar o MVP
-Configurar GCP: Garanta acesso ao BigQuery e crie o dataset logisticsdata.
-
-Variáveis de Ambiente: Configure suas chaves de API (Gemini, Visual Crossing).
-
-Processamento: Execute os notebooks de extração para popular as tabelas fato.
-
-Treinamento: Rode o script de ML para gerar o arquivo .pkl do modelo preditivo.
-
-🛠️ Como Executar (Em breve)
-(Nota: Este projeto está em fase ativa de desenvolvimento. Instruções de configuração de ambiente e requisitos de bibliotecas serão adicionados conforme as fases forem concluídas.)
-
-Desenvolvido por [Filiphe]
+👨‍💻 Autor
+Filiphe - Data Science & Logistics Engineering
