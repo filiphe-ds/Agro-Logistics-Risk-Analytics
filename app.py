@@ -4,12 +4,13 @@ import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import plotly.express as px
+import pydeck as pdk
 import os
 from dotenv import load_dotenv
 
 # 1. Configurações Iniciais
 load_dotenv()
-st.set_page_config(page_title="Agro-Logistics Risk Analytics", layout="wide")
+st.set_page_config(page_title="Agro-Logistics Risk Analytics v2.0", layout="wide")
 
 # --- CONEXÃO ---
 def get_bigquery_client():
@@ -23,7 +24,7 @@ def get_bigquery_client():
 
 client = get_bigquery_client()
 
-# --- CARREGAMENTO DE DADOS ---
+# --- CARREGAMENTO DE DADOS (COM CACHE) ---
 
 @st.cache_data(ttl=600) # Atualiza o cache a cada 10 minutos
 def load_ship_data():
@@ -49,16 +50,37 @@ def load_nlp_data():
     df = client.query(query).to_dataframe()
     return df.iloc[0] if not df.empty else None
 
+@st.cache_data(ttl=600)
+def load_map_data():
+    """Busca as coordenadas da DIM e faz JOIN com o clima mais recente"""
+    project = client.project
+    # Extraímos lat/lon do campo GEOGRAPHY usando ST_Y e ST_X
+    query = f"""
+        SELECT 
+            g.nome_ponto, 
+            ST_Y(g.coordenadas) as lat, 
+            ST_X(g.coordenadas) as lon, 
+            g.tipo_ponto,
+            c.precipitacao_mm,
+            c.velocidade_vento,
+            c.alerta_critico
+        FROM `{project}.logisticsdata.dim_geografia_rota` g
+        LEFT JOIN `{project}.logisticsdata.fato_clima` c ON g.loc_id = c.loc_id
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY g.loc_id ORDER BY c.timestamp_leitura DESC) = 1
+    """
+    return client.query(query).to_dataframe()
+
 # --- INTERFACE PRINCIPAL ---
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
+# Usamos um try/except global para capturar erros de carregamento de dados
 try:
-    # Busca dados de Navios e NLP
+    # 1. Busca todos os dados necessários
     df_ships = load_ship_data()
     nlp_event = load_nlp_data()
 
-    # 1. Status do Robô e Clima Logístico
+    # --- Painel Superior: Status do Robô e Clima Logístico ---
     col_status_1, col_status_2 = st.columns(2)
     
     with col_status_1:
@@ -70,66 +92,123 @@ try:
         if nlp_event is not None:
             score = nlp_event['score_risco']
             texto = nlp_event['texto_original']
-            if score > 0.4:
-                st.error(f"⚠️ **Alerta Logístico:** {texto}")
-            elif score > 0:
-                st.warning(f"🟡 **Atenção Logística:** {texto}")
-            else:
-                st.success("🟢 **Acessos Normais:** Ecovias e Porto operando sem alertas.")
+            if score > 0.4: st.error(f"⚠️ **Alerta Logístico:** {texto}")
+            elif score > 0: st.warning(f"🟡 **Atenção Logística:** {texto}")
+            else: st.success("🟢 **Acessos Normais:** Ecovias e Porto operando sem alertas.")
 
-    # 2. KPIs Principais
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total de Navios", len(df_ships))
-    with col2:
-        st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm")
-    with col3:
-        # Usamos o score real do NLP no KPI de Risco
-        risco_logistico = nlp_event['score_risco'] * 100 if nlp_event is not None else 0
-        st.metric("Risco Logístico (NLP)", f"{risco_logistico:.0f}%")
-    with col4:
-        st.metric("Prob. Média Atraso", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
+    # --- Criação das Abas (Tabs) ---
+    tab_monitor, tab_radar = st.tabs(["📊 Monitor de Operações", "🛰️ Radar Geográfico"])
 
-    # 3. Gráficos
-    st.subheader("📊 Análise de Volume por Terminal")
-    fig = px.bar(df_ships, x='terminal', y='quantidade_estimada', color='rain_feature',
-                 color_continuous_scale="Reds", labels={'quantidade_estimada': 'Volume (Ton)'})
-    st.plotly_chart(fig, use_container_width=True)
+    # --- ABA 1: MONITOR DE OPERAÇÕES ---
+    with tab_monitor:
+        # 1. KPIs Principais
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total de Navios", len(df_ships))
+        with col2:
+            st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm")
+        with col3:
+            # Score real do NLP vindo do BigQuery
+            risco_logistico = nlp_event['score_risco'] * 100 if nlp_event is not None else 0
+            st.metric("Risco de Acessos (NLP)", f"{risco_logistico:.0f}%")
+        with col4:
+            st.metric("Prob. Média Atraso (ML)", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
 
-    # 4. Tabela
-    st.subheader("🔍 Monitor de Embarcações")
-    st.dataframe(df_ships.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
+        st.divider()
+
+        # 2. Gráficos
+        st.subheader("📊 Análise de Volume por Terminal")
+        fig = px.bar(df_ships, x='terminal', y='quantidade_estimada', color='rain_feature',
+                     color_continuous_scale="Reds", labels={'quantidade_estimada': 'Volume (Ton)', 'rain_feature': 'Chuva (mm)'})
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 3. Tabela
+        st.subheader("🔍 Monitor Detalhado de Embarcações")
+        # Destacamos em vermelho onde a chuva está mais forte
+        st.dataframe(df_ships.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
+
+    # --- ABA 2: RADAR GEOGRÁFICO ---
+    with tab_radar:
+        st.subheader("📍 Monitoramento Espacial de Ativos")
+        try:
+            df_map = load_map_data()
+            
+            # Criamos uma coluna de cor baseada no alerta clima
+            # Vermelho para alerta crítico ([R, G, B, Alpha]), Azul para normal
+            df_map['color'] = df_map['alerta_critico'].apply(
+                lambda x: [255, 30, 30, 180] if x else [30, 144, 255, 180]
+            )
+            
+            # Configuração do Mapa Pydeck
+            st.pydeck_chart(pdk.Deck(
+                map_style='mapbox://styles/mapbox/light-v9', # Estilo claro e profissional
+                initial_view_state=pdk.ViewState(
+                    latitude=-23.95,   # Centralizado em Santos
+                    longitude=-46.35,
+                    zoom=10,
+                    pitch=40,          # Ângulo 3D
+                ),
+                layers=[
+                    # Camada de Pontos (Scatterplot)
+                    pdk.Layer(
+                        'ScatterplotLayer',
+                        data=df_map,
+                        get_position='[lon, lat]',
+                        get_color='color',
+                        get_radius=600,         # Tamanho do ponto
+                        pickable=True,          # Ativa tooltip
+                        auto_highlight=True,
+                    ),
+                ],
+                # Configuração do Tooltip (Balãozinho ao passar o mouse)
+                tooltip={
+                    "text": "{nome_ponto}\nTipo: {tipo_ponto}\nChuva: {precipitacao_mm}mm\nVento: {velocidade_vento}km/h"
+                }
+            ))
+            
+            st.caption("🔴 Pontos em vermelho indicam condições críticas de clima nos ativos logísticos (Chuva > 5mm ou Vento > 15km/h).")
+            
+        except Exception as map_e:
+            st.error(f"Erro ao carregar mapa: {map_e}")
 
 except Exception as e:
-    st.error(f"Erro na interface: {e}")
+    st.error(f"Erro crítico na interface: {e}")
+    st.info("Verifique a conexão com o BigQuery e os Secrets do Streamlit.")
 
-# --- SIDEBAR: SIMULADOR DE IA ---
+# --- SIDEBAR: SIMULADOR DE IA (FICA FORA DAS TABS) ---
 st.sidebar.header("🧠 Inteligência Artificial")
 try:
+    # Carregamento do Modelo de ML
     model = joblib.load('models/modelo_risco_demurrage_v1.pkl')
     
-    # Pegamos o score real para usar como base no simulador
+    # Injetamos o score real do NLP vindo do BigQuery (Fim do slider manual!)
     current_nlp_score = float(nlp_event['score_risco']) if nlp_event is not None else 0.0
     
-    st.sidebar.markdown(f"**Score NLP Atual (Real):** `{current_nlp_score:.2f}`")
+    st.sidebar.markdown(f"📈 **Risco NLP Atual (Real):** `{current_nlp_score:.2f}`")
     st.sidebar.divider()
     
+    st.sidebar.markdown("Simule as condições operacionais:")
     sim_carga = st.sidebar.slider("Volume do Navio (Toneladas)", 5000, 150000, 50000)
     sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
     sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
     
-    # O Score NLP não é mais slider, é um valor fixo injetado do BigQuery
+    # Botão para calcular a probabilidade baseada no modelo e no score real
     if st.sidebar.button("Calcular Risco Real"):
+        # Cria o input na ordem exata que o modelo Random Forest espera
         input_data = pd.DataFrame(
             [[sim_chuva, sim_vento, current_nlp_score, sim_carga]], 
             columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada']
         )
+        
+        # Faz a previsão da probabilidade (classe 1 = Demurrage)
         prob = model.predict_proba(input_data)[0][1]
         
+        # Exibe o resultado de forma visual
         st.sidebar.metric("Probabilidade de Demurrage", f"{prob:.1%}")
-        if prob > 0.7: st.sidebar.error("⚠️ ALTO RISCO")
+        
+        if prob > 0.7: st.sidebar.error("⚠️ ALTO RISCO DE ATRASO")
         elif prob > 0.4: st.sidebar.warning("🟡 RISCO MODERADO")
         else: st.sidebar.success("✅ OPERAÇÃO SEGURA")
 
 except Exception as e:
-    st.sidebar.error(f"Erro no modelo: {e}")
+    st.sidebar.error(f"Erro ao carregar simulador: {e}")
