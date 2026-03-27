@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 st.set_page_config(page_title="Agro-Logistics Risk Analytics", layout="wide")
 
-# --- CONEXÃO BLINDADA PARA O STREAMLIT CLOUD ---
+# --- CONEXÃO ---
 def get_bigquery_client():
     if "gcp_service_account" in st.secrets:
         info = st.secrets["gcp_service_account"]
@@ -23,8 +23,10 @@ def get_bigquery_client():
 
 client = get_bigquery_client()
 
-@st.cache_data
-def load_data():
+# --- CARREGAMENTO DE DADOS ---
+
+@st.cache_data(ttl=600) # Atualiza o cache a cada 10 minutos
+def load_ship_data():
     project = client.project 
     query = f"""
         SELECT *, 
@@ -33,77 +35,101 @@ def load_data():
         WHERE ship_id IS NOT NULL
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ship_id ORDER BY inserido_em DESC) = 1
     """
+    return client.query(query).to_dataframe()
+
+@st.cache_data(ttl=600)
+def load_nlp_data():
+    project = client.project
+    query = f"""
+        SELECT texto_original, score_risco, timestamp_leitura
+        FROM `{project}.logisticsdata.fato_contingencias_nlp`
+        ORDER BY timestamp_leitura DESC
+        LIMIT 1
+    """
     df = client.query(query).to_dataframe()
-    return df
+    return df.iloc[0] if not df.empty else None
 
 # --- INTERFACE PRINCIPAL ---
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
-# Usamos um único bloco TRY para toda a interface que depende dos dados
 try:
-    # 1. Carregamento de dados
-    df = load_data()
+    # Busca dados de Navios e NLP
+    df_ships = load_ship_data()
+    nlp_event = load_nlp_data()
 
-    # 2. Banner de Status (Só aparece se o df não estiver vazio)
-    if not df.empty:
-        ultima_atualizacao = df['data_formatada'].iloc[0]
-        st.info(f"🤖 **Status do Sistema:** Robô operando normalmente. Última coleta em Santos: {ultima_atualizacao}")
+    # 1. Status do Robô e Clima Logístico
+    col_status_1, col_status_2 = st.columns(2)
+    
+    with col_status_1:
+        if not df_ships.empty:
+            ultima_coleta = df_ships['data_formatada'].iloc[0]
+            st.info(f"🤖 **Monitor de Navios:** Atualizado em {ultima_coleta}")
 
-    # 3. KPIs Principais (Métricas em 4 colunas)
+    with col_status_2:
+        if nlp_event is not None:
+            score = nlp_event['score_risco']
+            texto = nlp_event['texto_original']
+            if score > 0.4:
+                st.error(f"⚠️ **Alerta Logístico:** {texto}")
+            elif score > 0:
+                st.warning(f"🟡 **Atenção Logística:** {texto}")
+            else:
+                st.success("🟢 **Acessos Normais:** Ecovias e Porto operando sem alertas.")
+
+    # 2. KPIs Principais
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total de Navios", len(df))
+        st.metric("Total de Navios", len(df_ships))
     with col2:
-        st.metric("Chuva Média (Santos)", f"{df['rain_feature'].mean():.1f} mm")
+        st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm")
     with col3:
-        st.metric("Vento Médio", f"{df['wind_feature'].mean():.1f} km/h")
+        # Usamos o score real do NLP no KPI de Risco
+        risco_logistico = nlp_event['score_risco'] * 100 if nlp_event is not None else 0
+        st.metric("Risco Logístico (NLP)", f"{risco_logistico:.0f}%")
     with col4:
-        st.metric("Risco Médio de Atraso", f"{df['nlp_risk_score'].mean()*100:.1f}%")
+        st.metric("Prob. Média Atraso", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
 
-    # 4. Visualização de Risco (Gráfico de Barras)
-    st.subheader("📊 Análise de Risco por Terminal")
-    fig = px.bar(
-        df, x='terminal', y='quantidade_estimada', color='rain_feature',
-        title="Volume por Terminal vs. Intensidade de Chuva",
-        labels={'quantidade_estimada': 'Volume (Toneladas)', 'terminal': 'Terminal', 'rain_feature': 'Chuva (mm)'},
-        color_continuous_scale="Reds"
-    )
+    # 3. Gráficos
+    st.subheader("📊 Análise de Volume por Terminal")
+    fig = px.bar(df_ships, x='terminal', y='quantidade_estimada', color='rain_feature',
+                 color_continuous_scale="Reds", labels={'quantidade_estimada': 'Volume (Ton)'})
     st.plotly_chart(fig, use_container_width=True)
 
-    # 5. Tabela de Monitorização
-    st.subheader("🔍 Monitor de Embarcações e Alertas")
-    # Destacamos em vermelho onde a chuva está mais forte
-    st.dataframe(df.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
+    # 4. Tabela
+    st.subheader("🔍 Monitor de Embarcações")
+    st.dataframe(df_ships.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
 
 except Exception as e:
-    st.error(f"Erro ao carregar dados do BigQuery: {e}")
-    st.info("Verifique se as credenciais estão corretas nos Secrets do Streamlit.")
+    st.error(f"Erro na interface: {e}")
 
 # --- SIDEBAR: SIMULADOR DE IA ---
 st.sidebar.header("🧠 Inteligência Artificial")
 try:
     model = joblib.load('models/modelo_risco_demurrage_v1.pkl')
-    st.sidebar.markdown("Ajuste as condições para previsão em tempo real.")
+    
+    # Pegamos o score real para usar como base no simulador
+    current_nlp_score = float(nlp_event['score_risco']) if nlp_event is not None else 0.0
+    
+    st.sidebar.markdown(f"**Score NLP Atual (Real):** `{current_nlp_score:.2f}`")
+    st.sidebar.divider()
     
     sim_carga = st.sidebar.slider("Volume do Navio (Toneladas)", 5000, 150000, 50000)
     sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
     sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
-    sim_nlp = st.sidebar.slider("Score de Risco NLP (IA)", 0.0, 1.0, 0.5)
-
-    if st.sidebar.button("Prever Risco Agora"):
+    
+    # O Score NLP não é mais slider, é um valor fixo injetado do BigQuery
+    if st.sidebar.button("Calcular Risco Real"):
         input_data = pd.DataFrame(
-            [[sim_chuva, sim_vento, sim_nlp, sim_carga]], 
+            [[sim_chuva, sim_vento, current_nlp_score, sim_carga]], 
             columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada']
         )
         prob = model.predict_proba(input_data)[0][1]
         
-        if prob > 0.7:
-            st.sidebar.error(f"⚠️ RISCO ALTO: {prob:.1%}")
-        elif prob > 0.4:
-            st.sidebar.warning(f"🟡 RISCO MÉDIO: {prob:.1%}")
-        else:
-            st.sidebar.success(f"✅ RISCO BAIXO: {prob:.1%}")
+        st.sidebar.metric("Probabilidade de Demurrage", f"{prob:.1%}")
+        if prob > 0.7: st.sidebar.error("⚠️ ALTO RISCO")
+        elif prob > 0.4: st.sidebar.warning("🟡 RISCO MODERADO")
+        else: st.sidebar.success("✅ OPERAÇÃO SEGURA")
 
 except Exception as e:
-    st.sidebar.error(f"Erro ao carregar modelo: {e}")
+    st.sidebar.error(f"Erro no modelo: {e}")
