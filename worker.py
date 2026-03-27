@@ -102,53 +102,55 @@ def monitor_contingencias():
     TABLE_ID_NLP = f"{PROJECT_ID}.{DATASET_ID}.fato_contingencias_nlp"
     headers = {"User-Agent": "Mozilla/5.0"}
     score_final = 0.0
-    descricoes = []
+    textos = []
 
-    # 1. Scraper Ecovias (Estradas)
+    # 1. Scraper Ecovias
     try:
         res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=10, verify=False)
-        soup_eco = BeautifulSoup(res_eco.text, 'html.parser')
-        status_texto = soup_eco.get_text().lower()
+        status_texto = BeautifulSoup(res_eco.text, 'html.parser').get_text().lower()
         
         if any(x in status_texto for x in ["bloqueio", "interdição", "fechada", "pare e siga"]):
             score_final += 0.5
-            descricoes.append("Bloqueio/Interdição no SAI (Ecovias)")
+            textos.append("Ecovias: Bloqueio detectado no SAI.")
         elif any(x in status_texto for x in ["lentidão", "congestionamento", "tráfego intenso"]):
             score_final += 0.2
-            descricoes.append("Lentidão nas Rodovias (Ecovias)")
-    except: print("⚠️ Erro ao acessar Ecovias")
+            textos.append("Ecovias: Tráfego lento na descida/subida.")
+    except: print("⚠️ Erro Ecovias")
 
-    # 2. Scraper G1 Santos (Notícias)
+    # 2. Scraper G1 Santos
     try:
         res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=10)
-        soup_g1 = BeautifulSoup(res_g1.text, 'html.parser')
-        noticias = soup_g1.find_all('a', class_='feed-post-link')
-        for n in noticias[:5]: # Olha as 5 principais manchetes
-            texto = n.get_text().lower()
-            if any(x in texto for x in ["greve", "paralisação", "manifestação", "protesto"]):
+        noticias = BeautifulSoup(res_g1.text, 'html.parser').find_all('a', class_='feed-post-link')
+        for n in noticias[:5]:
+            t = n.get_text().lower()
+            if any(x in t for x in ["greve", "paralisação", "protesto"]):
                 score_final += 0.5
-                descricoes.append(f"Alerta G1: {n.get_text()[:50]}...")
-            if any(x in texto for x in ["acidente", "explosão", "incêndio", "porto"]):
+                textos.append(f"G1: {n.get_text()[:50]}...")
+            if any(x in t for x in ["acidente", "incêndio", "porto"]):
                 score_final += 0.3
-                descricoes.append(f"Ocorrência G1: {n.get_text()[:50]}...")
-    except: print("⚠️ Erro ao acessar G1 Santos")
+                textos.append(f"G1: {n.get_text()[:50]}...")
+    except: print("⚠️ Erro G1")
 
-    # 3. Preparação e Envio
-    resumo = " | ".join(descricoes) if descricoes else "Condições normais de acesso."
+    # 3. Preparação com Colunas Exatas
+    resumo = " | ".join(textos) if textos else "Condições normais."
+    
     df_nlp = pd.DataFrame([{
-        'evento_id': str(uuid.uuid4()),
-        'timestamp_evento': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-        'fonte': 'Ecovias/G1',
-        'descricao_resumida': resumo,
-        'impacto_score': min(score_final, 1.0)
+        'cont_id': str(uuid.uuid4()),               # ID Único
+        'loc_id': 'SANTOS_LOGISTICA_GERAL',         # Identificador de local
+        'timestamp_leitura': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'texto_original': resumo,                   # Descrição do evento
+        'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto', 
+        'score_risco': min(score_final, 1.0),       # Impacto de 0 a 1
+        'json_extraido': f'{{"fontes": ["Ecovias", "G1"], "eventos": {len(textos)}}}'
     }])
 
     try:
+        # Usamos WRITE_APPEND para manter o histórico de notícias
         job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
         client.load_table_from_dataframe(df_nlp, TABLE_ID_NLP, job_config=job_config).result()
-        print(f"✅ [NLP] Score de Impacto: {df_nlp['impacto_score'][0]} | Evento registrado.")
+        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado com sucesso na fato_contingencias_nlp!")
     except Exception as e:
-        print(f"❌ Erro ao subir NLP: {e}")
+        print(f"❌ Erro ao subir para BigQuery (Verifique os nomes das colunas): {e}")
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
