@@ -1,9 +1,3 @@
-Filiphe, seu robô está muito bem estruturado! Para adicionar o "sensor" de eventos reais (NLP) sem bagunçar o que já funciona, vamos criar a Função 4 e integrá-á ao bloco principal.
-
-Aqui está o código atualizado do seu worker.py. Eu adicionei a lógica de raspagem da Ecovias e do G1 Santos, mapeando os termos para o seu impacto_score.
-
-🛠️ Robô de Dados v3.0 (Com Monitor de Contingências)
-Python
 import os
 import pandas as pd
 import numpy as np
