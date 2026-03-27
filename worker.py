@@ -98,62 +98,60 @@ def monitor_contingencias():
     score_final = 0.0
     textos = []
 
-    # 1. Scraper Ecovias (Adicionado User-Agent mais forte)
+    # 1. Scrapers (Ecovias e G1)
     try:
         res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=15, verify=False)
         if res_eco.status_code == 200:
             status_texto = BeautifulSoup(res_eco.text, 'html.parser').get_text().lower()
             if any(x in status_texto for x in ["bloqueio", "interdição", "fechada", "pare e siga"]):
                 score_final += 0.5
-                textos.append("Ecovias: Bloqueio detectado.")
+                textos.append("Ecovias: Bloqueio detectado no SAI.")
             elif any(x in status_texto for x in ["lentidão", "congestionamento", "tráfego intenso"]):
                 score_final += 0.2
                 textos.append("Ecovias: Tráfego lento.")
-        else:
-            print(f"⚠️ Ecovias retornou status {res_eco.status_code}")
-    except Exception as e: 
-        print(f"⚠️ Erro conexão Ecovias: {e}")
+    except: print("⚠️ Erro Ecovias")
 
-    # 2. Scraper G1 Santos
     try:
         res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=15)
         noticias = BeautifulSoup(res_g1.text, 'html.parser').find_all('a', class_='feed-post-link')
         for n in noticias[:5]:
             t = n.get_text().lower()
-            if any(x in t for x in ["greve", "paralisação", "protesto"]):
+            if any(x in t for x in ["greve", "paralisação", "protesto", "manifestação"]):
                 score_final += 0.5
                 textos.append(f"G1: {n.get_text()[:40]}...")
-            if any(x in t for x in ["acidente", "incêndio", "porto"]):
-                score_final += 0.3
-                textos.append(f"G1: {n.get_text()[:40]}...")
-    except Exception as e: 
-        print(f"⚠️ Erro G1 Santos: {e}")
+    except: print("⚠️ Erro G1")
 
-    # 3. Preparação dos Dados (O PULO DO GATO ESTÁ AQUI)
+    # 2. Criação do DataFrame
     resumo = " | ".join(textos) if textos else "Condições normais."
     
-    data_hoje = datetime.utcnow()
-    
+    # Criamos o dado com a data em formato ISO STRING (O BigQuery entende perfeitamente)
     df_nlp = pd.DataFrame([{
         'cont_id': str(uuid.uuid4()),
         'loc_id': 'SANTOS_LOGISTICA_GERAL',
-        'timestamp_leitura': data_hoje, # Enviando como objeto datetime puro
+        'timestamp_leitura': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'), # Formato ISO
         'texto_original': resumo,
         'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto',
         'score_risco': float(min(score_final, 1.0)),
-        'json_extraido': f'{{"fontes": ["Ecovias", "G1"], "total_alertas": {len(textos)}}}'
+        'json_extraido': f'{{"total_alertas": {len(textos)}}}'
     }])
 
-    # FORÇANDO O TIPO DATETIME PARA O PANDAS (Resolve o erro do log)
-    df_nlp['timestamp_leitura'] = pd.to_datetime(df_nlp['timestamp_leitura'])
-
+    # 3. ENVIO VIA JSON (O Pulo do Gato para evitar erro de Pyarrow)
     try:
-        # Usando LoadJobConfig para garantir que ele entenda o schema
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-        client.load_table_from_dataframe(df_nlp, TABLE_ID_NLP, job_config=job_config).result()
-        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado no BigQuery!")
+        # Transformamos o DataFrame em uma string JSON (Newline Delimited)
+        json_data = df_nlp.to_json(orient='records', lines=True)
+        
+        # Configuramos o job para ler JSON em vez de tentar adivinhar pelo DataFrame
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition="WRITE_APPEND",
+        )
+
+        # Enviamos como se fosse um arquivo de texto (extremamente estável)
+        client.load_table_from_file(io.StringIO(json_data), TABLE_ID_NLP, job_config=job_config).result()
+        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado com sucesso via JSON!")
+        
     except Exception as e:
-        print(f"❌ Erro final no BigQuery: {e}")
+        print(f"❌ Erro fatal no envio NLP: {e}")
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
