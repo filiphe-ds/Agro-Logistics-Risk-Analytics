@@ -98,9 +98,10 @@ def monitor_contingencias():
     score_final = 0.0
     textos = []
 
-    # 1. Scrapers (Ecovias e G1)
+    # 1. Scraper Ecovias
     try:
-        res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=15, verify=False)
+        # Aumentamos o timeout e forçamos o headers para evitar o "⚠️ Erro Ecovias"
+        res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=20, verify=False)
         if res_eco.status_code == 200:
             status_texto = BeautifulSoup(res_eco.text, 'html.parser').get_text().lower()
             if any(x in status_texto for x in ["bloqueio", "interdição", "fechada", "pare e siga"]):
@@ -109,10 +110,14 @@ def monitor_contingencias():
             elif any(x in status_texto for x in ["lentidão", "congestionamento", "tráfego intenso"]):
                 score_final += 0.2
                 textos.append("Ecovias: Tráfego lento.")
-    except: print("⚠️ Erro Ecovias")
+        else:
+            print(f"⚠️ Ecovias retornou status {res_eco.status_code}")
+    except Exception as e: 
+        print(f"⚠️ Erro ao acessar Ecovias: {e}")
 
+    # 2. Scraper G1 Santos
     try:
-        res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=15)
+        res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=20)
         noticias = BeautifulSoup(res_g1.text, 'html.parser').find_all('a', class_='feed-post-link')
         for n in noticias[:5]:
             t = n.get_text().lower()
@@ -121,35 +126,27 @@ def monitor_contingencias():
                 textos.append(f"G1: {n.get_text()[:40]}...")
     except: print("⚠️ Erro G1")
 
-    # 2. Criação do DataFrame
-    resumo = " | ".join(textos) if textos else "Condições normais."
+    # 3. Preparação dos Dados (Formato Dicionário - Sem Pandas aqui!)
+    resumo = " | ".join(textos) if textos else "Condições normais de acesso."
     
-    # Criamos o dado com a data em formato ISO STRING (O BigQuery entende perfeitamente)
-    df_nlp = pd.DataFrame([{
-        'cont_id': str(uuid.uuid4()),
-        'loc_id': 'SANTOS_LOGISTICA_GERAL',
-        'timestamp_leitura': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'), # Formato ISO
-        'texto_original': resumo,
-        'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto',
-        'score_risco': float(min(score_final, 1.0)),
-        'json_extraido': f'{{"total_alertas": {len(textos)}}}'
-    }])
+    # Criamos uma lista com UM dicionário. O BigQuery entende isso perfeitamente.
+    rows_to_insert = [{
+        "cont_id": str(uuid.uuid4()),
+        "loc_id": "SANTOS_LOGISTICA_GERAL",
+        "timestamp_leitura": datetime.utcnow().isoformat(), # Formato ISO8601 (O BigQuery ama)
+        "texto_original": resumo,
+        "entidade_evento": "Sistema Anchieta-Imigrantes / Porto",
+        "score_risco": float(min(score_final, 1.0)),
+        "json_extraido": f'{{"alertas": {len(textos)}}}'
+    }]
 
-    # 3. ENVIO VIA JSON (O Pulo do Gato para evitar erro de Pyarrow)
+    # 4. ENVIO DIRETO (Bypassing Pyarrow/Pandas)
     try:
-        # Transformamos o DataFrame em uma string JSON (Newline Delimited)
-        json_data = df_nlp.to_json(orient='records', lines=True)
-        
-        # Configuramos o job para ler JSON em vez de tentar adivinhar pelo DataFrame
-        job_config = bigquery.LoadJobConfig(
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-            write_disposition="WRITE_APPEND",
-        )
-
-        # Enviamos como se fosse um arquivo de texto (extremamente estável)
-        client.load_table_from_file(io.StringIO(json_data), TABLE_ID_NLP, job_config=job_config).result()
-        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado com sucesso via JSON!")
-        
+        errors = client.insert_rows_json(TABLE_ID_NLP, rows_to_insert)
+        if errors == []:
+            print(f"✅ [NLP] Score {rows_to_insert[0]['score_risco']} registrado com sucesso via JSON Insert!")
+        else:
+            print(f"❌ Erros no insert do BigQuery: {errors}")
     except Exception as e:
         print(f"❌ Erro fatal no envio NLP: {e}")
 
