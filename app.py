@@ -139,9 +139,11 @@ try:
                 lambda x: [255, 30, 30, 180] if x else [30, 144, 255, 180]
             )
             
-            # Configuração do Mapa Pydeck
+            # Configuração do Mapa Pydeck COM FUNDO GRATUITO
             st.pydeck_chart(pdk.Deck(
-                map_style='mapbox://styles/mapbox/light-v9', # Estilo claro e profissional
+                # Usando CartoDB Light, que é gratuito e aberto
+                map_style='https://basemaps.cartocdn.com/gl/light-all-gl-style/style.json', 
+                
                 initial_view_state=pdk.ViewState(
                     latitude=-23.95,   # Centralizado em Santos
                     longitude=-46.35,
