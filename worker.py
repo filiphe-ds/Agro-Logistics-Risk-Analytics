@@ -94,57 +94,66 @@ def processar_e_subir_lineup(df_bruto):
 def monitor_contingencias():
     print("📰 [NLP] Monitorando Ecovias e G1 Santos...")
     TABLE_ID_NLP = f"{PROJECT_ID}.{DATASET_ID}.fato_contingencias_nlp"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
     score_final = 0.0
     textos = []
 
-    # 1. Scraper Ecovias
+    # 1. Scraper Ecovias (Adicionado User-Agent mais forte)
     try:
-        res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=10, verify=False)
-        status_texto = BeautifulSoup(res_eco.text, 'html.parser').get_text().lower()
-        
-        if any(x in status_texto for x in ["bloqueio", "interdição", "fechada", "pare e siga"]):
-            score_final += 0.5
-            textos.append("Ecovias: Bloqueio detectado no SAI.")
-        elif any(x in status_texto for x in ["lentidão", "congestionamento", "tráfego intenso"]):
-            score_final += 0.2
-            textos.append("Ecovias: Tráfego lento na descida/subida.")
-    except: print("⚠️ Erro Ecovias")
+        res_eco = requests.get("https://www.ecoviasimigrantes.com.br/", headers=headers, timeout=15, verify=False)
+        if res_eco.status_code == 200:
+            status_texto = BeautifulSoup(res_eco.text, 'html.parser').get_text().lower()
+            if any(x in status_texto for x in ["bloqueio", "interdição", "fechada", "pare e siga"]):
+                score_final += 0.5
+                textos.append("Ecovias: Bloqueio detectado.")
+            elif any(x in status_texto for x in ["lentidão", "congestionamento", "tráfego intenso"]):
+                score_final += 0.2
+                textos.append("Ecovias: Tráfego lento.")
+        else:
+            print(f"⚠️ Ecovias retornou status {res_eco.status_code}")
+    except Exception as e: 
+        print(f"⚠️ Erro conexão Ecovias: {e}")
 
     # 2. Scraper G1 Santos
     try:
-        res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=10)
+        res_g1 = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=15)
         noticias = BeautifulSoup(res_g1.text, 'html.parser').find_all('a', class_='feed-post-link')
         for n in noticias[:5]:
             t = n.get_text().lower()
             if any(x in t for x in ["greve", "paralisação", "protesto"]):
                 score_final += 0.5
-                textos.append(f"G1: {n.get_text()[:50]}...")
+                textos.append(f"G1: {n.get_text()[:40]}...")
             if any(x in t for x in ["acidente", "incêndio", "porto"]):
                 score_final += 0.3
-                textos.append(f"G1: {n.get_text()[:50]}...")
-    except: print("⚠️ Erro G1")
+                textos.append(f"G1: {n.get_text()[:40]}...")
+    except Exception as e: 
+        print(f"⚠️ Erro G1 Santos: {e}")
 
-    # 3. Preparação com Colunas Exatas
+    # 3. Preparação dos Dados (O PULO DO GATO ESTÁ AQUI)
     resumo = " | ".join(textos) if textos else "Condições normais."
     
+    data_hoje = datetime.utcnow()
+    
     df_nlp = pd.DataFrame([{
-        'cont_id': str(uuid.uuid4()),               # ID Único
-        'loc_id': 'SANTOS_LOGISTICA_GERAL',         # Identificador de local
-        'timestamp_leitura': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-        'texto_original': resumo,                   # Descrição do evento
-        'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto', 
-        'score_risco': min(score_final, 1.0),       # Impacto de 0 a 1
-        'json_extraido': f'{{"fontes": ["Ecovias", "G1"], "eventos": {len(textos)}}}'
+        'cont_id': str(uuid.uuid4()),
+        'loc_id': 'SANTOS_LOGISTICA_GERAL',
+        'timestamp_leitura': data_hoje, # Enviando como objeto datetime puro
+        'texto_original': resumo,
+        'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto',
+        'score_risco': float(min(score_final, 1.0)),
+        'json_extraido': f'{{"fontes": ["Ecovias", "G1"], "total_alertas": {len(textos)}}}'
     }])
 
+    # FORÇANDO O TIPO DATETIME PARA O PANDAS (Resolve o erro do log)
+    df_nlp['timestamp_leitura'] = pd.to_datetime(df_nlp['timestamp_leitura'])
+
     try:
-        # Usamos WRITE_APPEND para manter o histórico de notícias
+        # Usando LoadJobConfig para garantir que ele entenda o schema
         job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
         client.load_table_from_dataframe(df_nlp, TABLE_ID_NLP, job_config=job_config).result()
-        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado com sucesso na fato_contingencias_nlp!")
+        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} registrado no BigQuery!")
     except Exception as e:
-        print(f"❌ Erro ao subir para BigQuery (Verifique os nomes das colunas): {e}")
+        print(f"❌ Erro final no BigQuery: {e}")
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
