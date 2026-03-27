@@ -52,14 +52,14 @@ def load_nlp_data():
 
 @st.cache_data(ttl=600)
 def load_map_data():
-    """Busca as coordenadas da DIM e faz JOIN com o clima mais recente"""
+    """Busca as coordenadas e as converte de STRING para GEOGRAPHY na query"""
     project = client.project
-    # Extraímos lat/lon do campo GEOGRAPHY usando ST_Y e ST_X
+    # Usamos ST_GEOGFROMTEXT para que o BigQuery entenda a coluna como coordenadas
     query = f"""
         SELECT 
             g.nome_ponto, 
-            ST_Y(g.coordenadas) as lat, 
-            ST_X(g.coordenadas) as lon, 
+            ST_Y(ST_GEOGFROMTEXT(g.coordenadas)) as lat, 
+            ST_X(ST_GEOGFROMTEXT(g.coordenadas)) as lon, 
             g.tipo_ponto,
             c.precipitacao_mm,
             c.velocidade_vento,
