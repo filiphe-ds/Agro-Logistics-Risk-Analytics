@@ -4,7 +4,8 @@ import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import plotly.express as px
-import pydeck as pdk
+import folium
+from streamlit_folium import st_folium
 import os
 from dotenv import load_dotenv
 
@@ -129,49 +130,42 @@ try:
 
     # --- ABA 2: RADAR GEOGRÁFICO ---
     with tab_radar:
-        st.subheader("📍 Monitoramento Espacial de Ativos")
+        st.subheader("📍 Radar Geográfico de Ativos")
         try:
             df_map = load_map_data()
             
-            # Criamos uma coluna de cor baseada no alerta clima
-            # Vermelho para alerta crítico ([R, G, B, Alpha]), Azul para normal
-            df_map['color'] = df_map['alerta_critico'].apply(
-                lambda x: [255, 30, 30, 180] if x else [30, 144, 255, 180]
-            )
-            
-            # Configuração do Mapa Pydeck COM FUNDO GRATUITO
-            st.pydeck_chart(pdk.Deck(
-                # Usando CartoDB Light, que é gratuito e aberto
-                map_style='https://basemaps.cartocdn.com/gl/light-all-gl-style/style.json', 
+            # 1. Criamos o mapa base centrado em Santos
+            m = folium.Map(location=[-23.95, -46.35], zoom_start=11, tiles="OpenStreetMap")
+
+            # 2. Adicionamos os pontos (POIs) do seu BigQuery
+            for index, row in df_map.iterrows():
+                # Define a cor: Vermelho para alerta, Azul para normal
+                cor_ponto = "red" if row['alerta_critico'] else "blue"
+                icone = "cloud-showers-heavy" if row['alerta_critico'] else "ship"
                 
-                initial_view_state=pdk.ViewState(
-                    latitude=-23.95,   # Centralizado em Santos
-                    longitude=-46.35,
-                    zoom=10,
-                    pitch=40,          # Ângulo 3D
-                ),
-                layers=[
-                    # Camada de Pontos (Scatterplot)
-                    pdk.Layer(
-                        'ScatterplotLayer',
-                        data=df_map,
-                        get_position='[lon, lat]',
-                        get_color='color',
-                        get_radius=600,         # Tamanho do ponto
-                        pickable=True,          # Ativa tooltip
-                        auto_highlight=True,
-                    ),
-                ],
-                # Configuração do Tooltip (Balãozinho ao passar o mouse)
-                tooltip={
-                    "text": "{nome_ponto}\nTipo: {tipo_ponto}\nChuva: {precipitacao_mm}mm\nVento: {velocidade_vento}km/h"
-                }
-            ))
+                # Criamos um balão informativo (Popup)
+                popup_text = f"""
+                <b>{row['nome_ponto']}</b><br>
+                Tipo: {row['tipo_ponto']}<br>
+                Chuva: {row['precipitacao_mm']}mm<br>
+                Vento: {row['velocidade_vento']}km/h
+                """
+                
+                # Adiciona o marcador no mapa
+                folium.Marker(
+                    location=[row['lat'], row['lon']],
+                    popup=folium.Popup(popup_text, max_width=300),
+                    tooltip=row['nome_ponto'],
+                    icon=folium.Icon(color=cor_ponto, icon=icone, prefix='fa')
+                ).add_to(m)
+
+            # 3. Exibimos o mapa no Streamlit
+            st_folium(m, width=1200, height=500, returned_objects=[])
             
-            st.caption("🔴 Pontos em vermelho indicam condições críticas de clima nos ativos logísticos (Chuva > 5mm ou Vento > 15km/h).")
-            
+            st.caption("🔵 Azul: Operação Normal | 🔴 Vermelho: Condições Críticas Detectadas")
+
         except Exception as map_e:
-            st.error(f"Erro ao carregar mapa: {map_e}")
+            st.error(f"Erro ao renderizar o Radar: {map_e}")
 
 except Exception as e:
     st.error(f"Erro crítico na interface: {e}")
