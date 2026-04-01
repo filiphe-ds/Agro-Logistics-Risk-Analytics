@@ -85,14 +85,14 @@ def monitor_contingencias_batch():
     safe_load_to_bq(df_nlp, "fato_contingencias_nlp")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura em tempo real (Modo Único): {datetime.now()}")
+    print(f"🚀 Iniciando captura em tempo real (Modo Anti-Duplicata): {datetime.now()}")
     
     url_carga = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
     
     df_bruto = extrair_dados_porto(url_carga)
     
     if not df_bruto.empty:
-        # 1. MAPEAMENTO POR PALAVRA-CHAVE
+        # 1. MAPEAMENTO POR POSIÇÃO
         target_keys = {
             'ship_id': 'imo',
             'nome_navio': 'navio_ship',
@@ -102,25 +102,34 @@ def processar_operacao():
             'terminal': 'terminal'
         }
 
-        # Criamos um dicionário para armazenar os dados limpos
         dados_limpos = {}
-
-        # Para cada dado que queremos, buscamos a PRIMEIRA coluna que dê match
+        
+        # O segredo: Pegar apenas o PRIMEIRO índice que der match com a keyword
         for destino, keyword in target_keys.items():
-            coluna_encontrada = next((c for c in df_bruto.columns if keyword in c), None)
-            if coluna_encontrada:
-                # Pegamos apenas a primeira ocorrência encontrada para evitar duplicatas
-                dados_limpos[destino] = df_bruto[coluna_encontrada]
+            # Encontra o índice da primeira coluna que contém a keyword
+            idx = next((i for i, c in enumerate(df_bruto.columns) if keyword in str(c).lower()), None)
+            
+            if idx is not None:
+                # Extraímos a coluna pela posição exata para garantir que venha apenas UMA Series
+                coluna_serie = df_bruto.iloc[:, idx]
+                
+                # Caso o Pandas retorne um DataFrame (raro com iloc de um índice), pegamos a primeira coluna
+                if isinstance(coluna_serie, pd.DataFrame):
+                    coluna_serie = coluna_serie.iloc[:, 0]
+                
+                # Salvamos apenas os valores para resetar qualquer conflito de índice
+                dados_limpos[destino] = coluna_serie.reset_index(drop=True)
             else:
-                dados_limpos[destino] = None
+                dados_limpos[destino] = pd.Series([None] * len(df_bruto))
 
-        # Criamos o DataFrame NOVO - Isso garante chaves únicas (sem erro de duplicate keys)
+        # Criamos o DataFrame NOVO - Agora é IMPOSSÍVEL ter chaves duplicadas
         df_final = pd.DataFrame(dados_limpos)
 
-        # 2. TRATAMENTO DE DADOS (Agora sem risco de duplicatas)
+        # 2. TRATAMENTO DE DADOS
+        # Agora o df_final['data_chegada_prevista'] é garantidamente uma Series única
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
         
-        # Limpeza de números (Peso/Quantidade)
+        # Limpeza de números
         df_final['quantidade_estimada'] = pd.to_numeric(
             df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
             errors='coerce'
@@ -131,7 +140,7 @@ def processar_operacao():
         df_final['status_atual'] = 'Esperado'
         df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
 
-        # Removemos linhas essenciais que estejam nulas
+        # Limpeza final: removemos o que não tem ID ou Data
         df_final = df_final.dropna(subset=['ship_id', 'data_chegada_prevista']).copy()
 
         if not df_final.empty:
@@ -146,10 +155,10 @@ def processar_operacao():
             ]
             
             df_fato = df_final[colunas_fato].copy()
-            print(f"📦 Pronto para subir {len(df_fato)} navios únicos.")
+            print(f"📦 Sucesso: {len(df_fato)} navios processados sem duplicatas de colunas.")
             safe_load_to_bq(df_fato, "fato_lineup")
         else:
-            print("⚠️ Nenhum dado válido após filtragem de IDs e Datas.")
+            print("⚠️ Nenhuma linha válida restou após o tratamento.")
 
 if __name__ == "__main__":
     processar_operacao()
