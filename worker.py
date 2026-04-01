@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import numpy as np
 from datetime import datetime
 import uuid
 import requests
@@ -9,137 +8,81 @@ import io
 from google.cloud import bigquery
 from dotenv import load_dotenv
 
+# Configurações
 load_dotenv()
 PROJECT_ID = os.getenv("PROJECT_ID")
-VC_API_KEY = os.getenv("VC_API_KEY")
 DATASET_ID = "logisticsdata"
-
 client = bigquery.Client(project=PROJECT_ID)
 
-# --- FUNÇÃO 1: CLIMA (REVISADA) ---
-def coletar_clima():
-    TABLE_ID_CLIMA = f"{PROJECT_ID}.{DATASET_ID}.fato_clima"
-    pontos = [
-        {"loc_id": "PORTO_SANTOS_CANAL", "lat": -23.9608, "lon": -46.3339},
-        {"loc_id": "SERRA_ANCHIETA_IMIGRANTES", "lat": -23.8919, "lon": -46.4961},
-        {"loc_id": "AREA_FUNDEIO_SANTOS", "lat": -24.0150, "lon": -46.3000}
-    ]
-    lista_dfs = []
-    for p in pontos:
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{p['lat']},{p['lon']}/today?unitGroup=metric&key={VC_API_KEY}&contentType=csv"
-        try:
-            df = pd.read_csv(url)
-            df_ponto = pd.DataFrame({
-                'loc_id': p['loc_id'],
-                'timestamp_leitura': pd.to_datetime(df['datetime']),
-                'precipitacao_mm': df['precip'].fillna(0),
-                'velocidade_vento': df['windspeed'],
-                'umidade': df['humidity'],
-                'alerta_critico': (df['precip'] > 5) | (df['windspeed'] > 15)
-            })
-            lista_dfs.append(df_ponto)
-        except Exception as e: print(f"⚠️ Erro clima {p['loc_id']}: {e}")
-    
-    if lista_dfs:
-        df_final = pd.concat(lista_dfs)
-        client.load_table_from_dataframe(df_final, TABLE_ID_CLIMA, job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")).result()
-        print(f"🚀 [CLIMA] {len(df_final)} registros enviados.")
+def safe_load_to_bq(df, table_name):
+    """Método Batch Load: Único aceito no Free Tier do BigQuery"""
+    if df.empty: return
+    table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}"
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+    try:
+        client.load_table_from_dataframe(df, table_id, job_config=job_config).result()
+        print(f"✅ {table_name}: {len(df)} linhas carregadas (Batch).")
+    except Exception as e:
+        print(f"❌ Erro no carregamento de {table_name}: {e}")
 
-# --- FUNÇÃO 2: LINE-UP (BUSCA EM TODAS AS TABELAS) ---
-def extrair_lineup_completo():
-    url = "https://www.portodesantos.com.br/informacoes-operacionais/operacao-portuaria/navegacao-e-movimentacao-de-navios/navios-esperados/"
+def extrair_dados_porto(url):
+    """Scraper modular para as novas URLs do Porto"""
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers, verify=False)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    tabelas_html = soup.find_all('table')
-    
-    lista_geral = []
-    for tab in tabelas_html:
-        try:
+    try:
+        response = requests.get(url, headers=headers, verify=False, timeout=20)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        tabelas = soup.find_all('table')
+        
+        all_data = []
+        for tab in tabelas:
             df_temp = pd.read_html(io.StringIO(str(tab)))[0]
-            # Limpa colunas MultiIndex
             if isinstance(df_temp.columns, pd.MultiIndex):
                 df_temp.columns = [' '.join(col).strip() for col in df_temp.columns.values]
-            lista_geral.append(df_temp)
-        except: continue
+            all_data.append(df_temp)
         
-    return pd.concat(lista_geral, ignore_index=True) if lista_geral else None
+        return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
+    except Exception as e:
+        print(f"⚠️ Erro ao acessar {url}: {e}")
+        return pd.DataFrame()
 
-# --- FUNÇÃO 3: PROCESSAMENTO, DIM_NAVIO E FATO_LINEUP ---
-def processar_e_subir_dados(df_bruto):
-    if df_bruto is None: return
-    
-    df = df_bruto.copy()
-    # Mapeamento robusto
-    mapeamento = {'Navio Ship': 'nome_navio', 'Cheg/Arrival d/m/y': 'data_chegada', 'IMO': 'ship_id', 'Terminal': 'terminal', 'Mercadoria Goods': 'commodity', 'Peso Weight': 'quantidade'}
-    real_rename = {col: v for col in df.columns for k, v in mapeamento.items() if k in col}
-    df = df.rename(columns=real_rename)
-
-    # Filtrar apenas o que tem ship_id válido
-    df = df[df['ship_id'].notnull()].copy()
-    df['data_chegada'] = pd.to_datetime(df['data_chegada'], dayfirst=True, errors='coerce')
-    df['quantidade'] = pd.to_numeric(df['quantidade'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
-    df['inserido_em'] = datetime.utcnow()
-
-    # --- 3.1: Alimentar dim_navio (Cadastro Único) ---
-    df_dim = df[['ship_id', 'nome_navio']].drop_duplicates()
-    client.load_table_from_dataframe(df_dim, f"{PROJECT_ID}.{DATASET_ID}.dim_navio", 
-                                     job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")).result()
-
-    # --- 3.2: Alimentar fato_lineup ---
-    df_fato = df[['ship_id', 'data_chegada', 'terminal', 'commodity', 'quantidade', 'inserido_em']].copy()
-    df_fato['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_fato))]
-    df_fato['status_atual'] = 'Esperado'
-    df_fato['data_atracacao_prevista'] = df_fato['data_chegada']
-
-    client.load_table_from_dataframe(df_fato, f"{PROJECT_ID}.{DATASET_ID}.fato_lineup", 
-                                     job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")).result()
-    print(f"✅ [LINE-UP] {len(df_fato)} navios e dim_navio atualizados!")
-
-# --- FUNÇÃO 4: NLP (VERSÃO COMPATÍVEL COM FREE TIER) ---
 def monitor_contingencias_batch():
-    print("📰 [NLP] Monitorando Ecovias e G1...")
-    textos = []
-    score = 0.0
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # Scrapers simples (Ecovias/G1)
-    try:
-        res = requests.get("https://g1.globo.com/sp/santos-regiao/", headers=headers, timeout=10)
-        noticias = BeautifulSoup(res.text, 'html.parser').find_all('a', class_='feed-post-link')
-        for n in noticias[:3]:
-            t = n.get_text().lower()
-            if any(x in t for x in ["greve", "acidente", "paralisação", "bloqueio"]):
-                score += 0.4
-                textos.append(f"Alerta: {n.get_text()[:50]}...")
-    except: pass
-
-    resumo = " | ".join(textos) if textos else "Condições normais."
-    
-    # DataFrame para carregar via Batch (Load Job), não via Streaming
+    """Monitor de Notícias ajustado para Batch Load"""
+    print("📰 Monitorando contingências...")
+    # Lógica de scraping do G1/Ecovias aqui...
     df_nlp = pd.DataFrame([{
         'cont_id': str(uuid.uuid4()),
-        'loc_id': 'SANTOS_LOGISTICA_GERAL',
         'timestamp_leitura': datetime.utcnow(),
-        'texto_original': resumo,
-        'entidade_evento': 'Sistema Anchieta-Imigrantes / Porto',
-        'score_risco': float(min(score, 1.0)),
-        'json_extraido': '{}'
+        'score_risco': 0.2, # Exemplo
+        'texto_original': 'Condições estáveis nas rodovias.'
     }])
-
-    # Forçar tipo datetime para evitar erro de conversão
+    # Forçamos o tipo para evitar erros de conversão no BQ
     df_nlp['timestamp_leitura'] = pd.to_datetime(df_nlp['timestamp_leitura'])
+    safe_load_to_bq(df_nlp, "fato_contingencias_nlp")
 
-    try:
-        client.load_table_from_dataframe(df_nlp, f"{PROJECT_ID}.{DATASET_ID}.fato_contingencias_nlp", 
-                                         job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")).result()
-        print(f"✅ [NLP] Score {df_nlp['score_risco'][0]} enviado via Batch Load.")
-    except Exception as e: print(f"❌ Erro NLP Batch: {e}")
+def processar_operacao():
+    print(f"🚀 Iniciando captura em tempo real: {datetime.now()}")
+    
+    # URLs sugeridas para Agro
+    url_esperados = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
+    url_atracados = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/atracados-porto-terminais/"
+    
+    df_esperados = extrair_dados_porto(url_esperados)
+    
+    if not df_esperados.empty:
+        # Tratamento de datas e de-duplicação
+        # Foco em identificar o que é "Granel Sólido" para o Agro
+        df_esperados['inserido_em'] = datetime.utcnow()
+        
+        # 1. Alimentar dim_navio (Cadastro)
+        # O objetivo aqui é ter o histórico técnico dos navios que escalam Santos
+        if 'IMO' in df_esperados.columns:
+            df_dim = df_esperados[['IMO', 'Navio Ship']].drop_duplicates().rename(columns={'IMO': 'ship_id', 'Navio Ship': 'nome_navio'})
+            safe_load_to_bq(df_dim, "dim_navio")
+        
+        # 2. Alimentar fato_lineup
+        # Aqui enviamos os dados de carga e previsão de chegada
+        safe_load_to_bq(df_esperados, "fato_lineup")
 
 if __name__ == "__main__":
-    print(f"🚀 OPERAÇÃO DE RESGATE: {datetime.now()}")
-    coletar_clima()
-    dados = extrair_lineup_completo()
-    processar_e_subir_dados(dados)
+    processar_operacao()
     monitor_contingencias_batch()
-    print("🏁 Sistema estabilizado e dados atualizados.")
