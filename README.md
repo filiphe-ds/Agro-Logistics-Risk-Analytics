@@ -1,50 +1,79 @@
-🚢 Agro-Logistics Risk Analytics v2.0
-Sistema inteligente de monitoramento e previsão de risco de Demurrage para operações de exportação agrícola no Porto de Santos. O projeto integra raspagem de dados em tempo real, automação em nuvem e Inteligência Artificial.
+# 🚢 Agro-Logistics Risk Analytics v2.0
 
-🚀 Arquitetura do Projeto
-O sistema opera como um pipeline de dados ponta a ponta:
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://agro-logistics-risk-analytics-km6au6byuklbh79jujlxjf.streamlit.app/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![BigQuery](https://img.shields.io/badge/Google_BigQuery-Data_Warehouse-blue)](https://cloud.google.com/bigquery)
 
-Coleta Automatizada (The Robot): Um script em Python (worker.py) realiza a extração de dados do Line-up oficial do Porto de Santos e coleta previsões climáticas via API do Visual Crossing.
+**Monitoramento de Risco de Demurrage e Condições Logísticas em Tempo Real para o Porto de Santos.**
+[Link do app](https://agro-logistics-risk-analytics-km6au6byuklbh79jujlxjf.streamlit.app/)
 
-Automação (CI/CD): O GitHub Actions executa o robô de hora em hora, garantindo que o banco de dados esteja sempre atualizado sem intervenção humana.
+---
 
-Data Warehouse: Os dados são processados, limpos e armazenados no Google BigQuery, organizados em tabelas de fatos e visões otimizadas para ML.
+## 🎯 Sobre o Projeto
 
-Inteligência Artificial: Um modelo de Random Forest (Scikit-Learn) analisa variáveis como volume de carga, precipitação e ventos para prever a probabilidade de atrasos.
+O **Agro-Logistics Risk Analytics** é uma plataforma de inteligência de dados desenvolvida para mitigar custos de **Demurrage** no setor de agronegócio. O sistema monitora o line-up de navios, condições meteorológicas e eventos logísticos críticos (bloqueios em rodovias e paralisações), utilizando **Machine Learning** para prever a probabilidade de atrasos.
 
-Interface: Um dashboard interativo em Streamlit permite a visualização de KPIs operacionais e simulações de risco em tempo real.
+### 🚀 Funcionalidades Principais
 
-🛠️ Tech Stack
-Linguagem: Python 3.11
+- **Monitor de Navios (Line-up):** Raspagem automática de dados do Porto de Santos, processando o fluxo de embarcações esperadas.
+- **Inteligência de Notícias (NLP):** Motor de scraping que monitora **Ecovias** (Sistema Anchieta-Imigrantes) e **G1 Santos**, convertendo notícias em um **Score de Risco Logístico** automatizado.
+- **Previsão de Risco com ML:** Modelo de classificação (Random Forest) que integra volume de carga, condições climáticas e risco de acesso para prever atrasos operacionais.
+- **Radar Geográfico:** Visualização espacial em tempo real utilizando **Folium**, mapeando pontos críticos de tráfego e terminais sob alerta climático.
 
-Data Prep: Pandas, NumPy, BeautifulSoup4
+---
 
-Cloud: Google Cloud Platform (BigQuery)
+## 🏗️ Arquitetura Técnica
 
-Orquestração: GitHub Actions (Cron Jobs)
+O projeto utiliza uma estrutura moderna de **Modern Data Stack**:
 
-Machine Learning: Scikit-Learn, Joblib
+1.  **Ingestão:** Robô autônomo (`worker.py`) rodando via **GitHub Actions** a cada hora.
+2.  **Processamento:** Limpeza e transformação de dados com **Pandas** e Python.
+3.  **Storage:** Data Warehouse escalável no **Google BigQuery**.
+4.  **Interface:** Dashboard interativo desenvolvido em **Streamlit**.
+5.  **Geospatial:** Dados geográficos armazenados como `GEOGRAPHY` no BigQuery e renderizados com Folium.
 
-Visualização: Streamlit, Plotly
+---
 
-📊 Funcionalidades
-✅ Monitor de Line-up: Lista atualizada de navios esperados no porto.
+## 🛠️ Tecnologias Utilizadas
 
-✅ Radar Climático: Monitoramento de precipitação e ventos em pontos estratégicos (Canal do Porto, Serra e Fundeio).
+- **Linguagem:** Python 3.9+
+- **Bibliotecas de Dados:** Pandas, Numpy, Scikit-learn
+- **Cloud/Infra:** Google Cloud Platform (BigQuery), GitHub Actions
+- **Visualização:** Streamlit, Plotly, Folium
+- **Scraping:** BeautifulSoup4, Requests
 
-✅ Simulador de IA: Interface lateral para prever riscos baseados em cenários customizados.
+---
 
-✅ Alertas Críticos: Identificação automática de condições climáticas que podem paralisar a operação.
+## 🏁 Como Executar o Projeto
 
-⚙️ Configuração de Segredos
-O projeto utiliza Secrets do GitHub e do Streamlit para proteger credenciais sensíveis. Nunca suba arquivos .json ou .env para o repositório.
+### Pré-requisitos
+- Conta no **Google Cloud Platform** (com projeto e BigQuery configurados).
+- Chave de API da **Visual Crossing** para dados climáticos.
 
-Variáveis Necessárias:
-PROJECT_ID: ID do seu projeto no Google Cloud.
+### Instalação Local
+1. Clone o repositório:
+   git clone [https://github.com/seu-usuario/agro-logistics-risk-analytics.git](https://github.com/seu-usuario/agro-logistics-risk-analytics.git)
 
-VC_API_KEY: Chave da API Visual Crossing.
+2. Instale as dependências:
 
-GCP_SA_JSON: Conteúdo do JSON da sua Service Account do Google.
+  pip install -r requirements.txt
 
-👨‍💻 Autor
-Filiphe - Data Science & Logistics Engineering
+3. Configure o arquivo .env com suas credenciais:
+
+  Code snippet
+  PROJECT_ID="seu-projeto-gcp"
+  VC_API_KEY="sua-chave-weather"
+
+4. Execute o app:
+  streamlit run app.py
+
+## 📈 Próximos Passos (Roadmap)
+[ ] Implementação de Deep Learning para análise de sentimento mais refinada das notícias.
+
+[ ] Criação de alertas automáticos via Telegram/E-mail para riscos acima de 80%.
+
+[ ] Inclusão de dados históricos de safras para análise de sazonalidade.
+
+Desenvolvido por Filiphe – [LinkedIn](https://www.linkedin.com/in/filipheassuncao/)
+
+
