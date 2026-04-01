@@ -29,7 +29,7 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro BQ {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura direta (Ajuste de Tipos): {datetime.now()}")
+    print(f"🚀 Iniciando captura direta (Correção de Tipos Pyarrow): {datetime.now()}")
     url = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
     
     try:
@@ -48,19 +48,18 @@ def processar_operacao():
         }
 
         for tab in tabelas:
-            df = pd.read_html(io.StringIO(str(tab)))[0]
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [' '.join(col).lower() for col in df.columns.values]
+            df_temp = pd.read_html(io.StringIO(str(tab)))[0]
+            if isinstance(df_temp.columns, pd.MultiIndex):
+                df_temp.columns = [' '.join(col).lower() for col in df_temp.columns.values]
             else:
-                df.columns = [str(c).lower() for c in df.columns]
+                df_temp.columns = [str(c).lower() for c in df_temp.columns]
 
-            for _, row in df.iterrows():
+            for _, row in df_temp.iterrows():
                 item = {}
                 for campo, keyword in mapeamento.items():
-                    col_alvo = next((c for c in df.columns if keyword in c), None)
+                    col_alvo = next((c for c in df_temp.columns if keyword in c), None)
                     item[campo] = row[col_alvo] if col_alvo else None
                 
-                # Só adiciona se tiver o IMO
                 if pd.notnull(item['ship_id']):
                     registros_limpos.append(item)
 
@@ -68,49 +67,60 @@ def processar_operacao():
             print("⚠️ Nenhum dado encontrado.")
             return
 
+        # Montamos o DataFrame base
         df_final = pd.DataFrame(registros_limpos).drop_duplicates()
 
-        # --- O PULO DO GATO: CONVERSÃO DE TIPOS ---
+        # --- CORREÇÃO DE TIPOS PARA O PYARROW ---
+
+        # 1. ship_id: Converte para string, remove o '.0' e filtra 'nan'
+        # Usamos uma função anônima para garantir que '9292577.0' vire '9292577'
+        df_final['ship_id'] = df_final['ship_id'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
+        df_final = df_final[df_final['ship_id'] != 'nan'].copy()
         
-        # 1. ship_id como STRING (Remove o .0 se houver)
-        df_final['ship_id'] = df_final['ship_id'].astype(str).str.split('.').str[0]
-        
-        # 2. data_chegada como TIMESTAMP
+        # 2. Datas: Garantir formato datetime64[ns]
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
         df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
         
-        # 3. quantidade como FLOAT
+        # 3. Quantidade: Garantir float real
         df_final['quantidade_estimada'] = pd.to_numeric(
             df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
             errors='coerce'
         ).fillna(0.0).astype(float)
         
-        # 4. Outros campos como STRING
+        # 4. Metadados
         df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
         df_final['status_atual'] = 'Esperado'
         df_final['inserido_em'] = datetime.utcnow()
 
-        # Limpeza final de nulos críticos
-        df_final = df_final.dropna(subset=['data_chegada_prevista', 'ship_id'])
+        # Filtro de sanidade
+        df_final = df_final.dropna(subset=['data_chegada_prevista', 'ship_id']).copy()
 
         if not df_final.empty:
-            # 1. Povoar dim_navio (Apenas ship_id e nome)
-            df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates().astype(str)
+            # --- UPLOAD PARA DIM_NAVIO ---
+            df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates().copy()
+            # Forçamos o tipo object (string) no pandas antes do upload
+            df_dim['ship_id'] = df_dim['ship_id'].astype(str)
+            df_dim['nome_navio'] = df_dim['nome_navio'].astype(str)
+            
+            print(f"📦 Subindo {len(df_dim)} navios para dim_navio...")
             safe_load_to_bq(df_dim, "dim_navio")
 
-            # 2. Povoar fato_lineup
-            colunas_fato = ['lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista', 
-                            'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em']
-            
+            # --- UPLOAD PARA FATO_LINEUP ---
+            colunas_fato = [
+                'lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista', 
+                'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
+            ]
             df_fato = df_final[colunas_fato].copy()
             
-            # Garantia final de tipos para o Pyarrow não reclamar
+            # Garantia final de conversão para o fiscal de tipos do BigQuery
             df_fato['ship_id'] = df_fato['ship_id'].astype(str)
-            df_fato['terminal'] = df_fato['terminal'].astype(str)
-            df_fato['commodity'] = df_fato['commodity'].astype(str)
+            df_fato['terminal'] = df_fato['terminal'].astype(str).fillna('N/A')
+            df_fato['commodity'] = df_fato['commodity'].astype(str).fillna('N/A')
             
-            print(f"📦 Sucesso: {len(df_fato)} navios prontos para o BigQuery.")
+            print(f"📦 Subindo {len(df_fato)} registros para fato_lineup...")
             safe_load_to_bq(df_fato, "fato_lineup")
+        else:
+            print("⚠️ Sem dados válidos após tratamento de tipos.")
 
     except Exception as e:
         print(f"❌ Erro fatal: {e}")
