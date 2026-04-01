@@ -23,9 +23,7 @@ client = bigquery.Client(project=PROJECT_ID)
 def limpar_nome_coluna(col):
     """Transforma nomes sujos em snake_case aceito pelo BigQuery"""
     col = str(col).lower()
-    # Remove acentos e caracteres especiais
     col = re.sub(r'[^\w\s]', '', col)
-    # Substitui espaços por underscores
     col = col.strip().replace(' ', '_')
     return col[:300]
 
@@ -44,63 +42,9 @@ def safe_load_to_bq(df, table_name):
     except Exception as e:
         print(f"❌ Erro no carregamento de {table_name}: {e}")
 
-def extrair_dados_porto_limpo(url):
-    """Scraper que limpa e padroniza cada tabela ANTES de juntar"""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    target_keys = {
-        'ship_id': 'imo',
-        'nome_navio': 'navio_ship',
-        'data_chegada_prevista': 'chegarrival',
-        'commodity': 'mercadoria_goods',
-        'quantidade_estimada': 'peso_weight',
-        'terminal': 'terminal'
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, verify=False, timeout=25)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        tabelas = soup.find_all('table')
-        
-        tabelas_padronizadas = []
-        
-        for tab in tabelas:
-            df_temp = pd.read_html(io.StringIO(str(tab)))[0]
-            
-            # 1. Achata MultiIndex e limpa nomes
-            if isinstance(df_temp.columns, pd.MultiIndex):
-                df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
-            else:
-                df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
-            
-            # 2. Para ESTA tabela, encontra a melhor coluna para cada alvo
-            dados_tabela = {}
-            for destino, keyword in target_keys.items():
-                col_match = next((c for c in df_temp.columns if keyword in c), None)
-                if col_match:
-                    # Pegamos apenas a primeira ocorrência da coluna nesta tabela
-                    dados_tabela[destino] = df_temp[col_match].iloc[:] 
-                else:
-                    dados_tabela[destino] = pd.Series([None] * len(df_temp))
-            
-            # 3. Cria um DF limpo desta tabela específica
-            df_limpo = pd.DataFrame(dados_tabela)
-            tabelas_padronizadas.append(df_limpo)
-        
-        # 4. Agora sim, concatenamos DFs que têm as mesmas colunas EXATAS
-        if tabelas_padronizadas:
-            df_consolidado = pd.concat(tabelas_padronizadas, ignore_index=True)
-            # Remove duplicatas de nomes de colunas que podem ter sobrado no concat
-            return df_consolidado.loc[:, ~df_consolidado.columns.duplicated()]
-        return pd.DataFrame()
-        
-    except Exception as e:
-        print(f"⚠️ Erro ao acessar {url}: {e}")
-        return pd.DataFrame()
-
 def monitor_contingencias_batch():
     """Monitor de Notícias via Batch Load"""
     print("📰 Monitorando contingências (Ecovias/G1)...")
-    # Lógica simplificada para garantir a carga
     df_nlp = pd.DataFrame([{
         'cont_id': str(uuid.uuid4()),
         'timestamp_leitura': datetime.utcnow(),
@@ -114,44 +58,98 @@ def monitor_contingencias_batch():
     safe_load_to_bq(df_nlp, "fato_contingencias_nlp")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura em tempo real (Modo Padronizado): {datetime.now()}")
+    print(f"🚀 Iniciando captura em tempo real (Modo Registro Único): {datetime.now()}")
     
     url_carga = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    # Já recebemos o DataFrame com colunas únicas e nomes padronizados
-    df_final = extrair_dados_porto_limpo(url_carga)
-    
-    if not df_final.empty:
-        # TRATAMENTO DE DADOS (Sem erro de duplicatas agora!)
-        df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
+    target_keys = {
+        'ship_id': 'imo',
+        'nome_navio': 'navio_ship',
+        'data_chegada_prevista': 'chegarrival',
+        'commodity': 'mercadoria_goods',
+        'quantidade_estimada': 'peso_weight',
+        'terminal': 'terminal'
+    }
+
+    try:
+        response = requests.get(url_carga, headers=headers, verify=False, timeout=30)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        tabelas_html = soup.find_all('table')
         
+        lista_final_registros = []
+        
+        for tab in tabelas_html:
+            # Lemos a tabela atual
+            df_temp = pd.read_html(io.StringIO(str(tab)))[0]
+            
+            # Limpamos os nomes das colunas APENAS desta tabela
+            if isinstance(df_temp.columns, pd.MultiIndex):
+                df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
+            else:
+                df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
+            
+            # Mapeamos quais colunas desta tabela correspondem aos nossos alvos
+            mapeamento_tabela = {}
+            for destino, keyword in target_keys.items():
+                col_match = next((c for c in df_temp.columns if keyword in c), None)
+                if col_match:
+                    mapeamento_tabela[destino] = col_match
+
+            # Extração linha a linha para evitar conflito de chaves do Pandas
+            for _, row in df_temp.iterrows():
+                registro = {
+                    'lineup_id': str(uuid.uuid4()),
+                    'status_atual': 'Esperado',
+                    'inserido_em': datetime.utcnow()
+                }
+                
+                # Preenchemos o dicionário apenas com as colunas encontradas
+                for destino, col_origem in mapeamento_tabela.items():
+                    registro[destino] = row[col_origem]
+                
+                # Filtro básico: se não tem nome ou IMO, ignoramos a linha
+                if pd.notnull(registro.get('ship_id')) and pd.notnull(registro.get('nome_navio')):
+                    lista_final_registros.append(registro)
+
+        if not lista_final_registros:
+            print("⚠️ Nenhum registro válido encontrado.")
+            return
+
+        # Criamos um DataFrame limpo a partir da lista de dicionários
+        # Isso garante que não existam colunas duplicadas!
+        df_final = pd.DataFrame(lista_final_registros)
+
+        # Tratamento de tipos seguro
+        df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
+        df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
+        
+        # Limpeza de peso (converte "20.000,00" para float)
         df_final['quantidade_estimada'] = pd.to_numeric(
             df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
             errors='coerce'
         ).fillna(0)
-        
-        df_final['inserido_em'] = datetime.utcnow()
-        df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
-        df_final['status_atual'] = 'Esperado'
-        df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
 
-        # Limpeza de segurança
-        df_final = df_final.dropna(subset=['ship_id', 'data_chegada_prevista']).copy()
+        # Remove o que não tem data válida
+        df_final = df_final.dropna(subset=['data_chegada_prevista']).copy()
 
         if not df_final.empty:
-            # Alimentar dim_navio
+            # 1. Alimentar dim_navio (Cadastro)
             df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates()
             safe_load_to_bq(df_dim, "dim_navio")
 
-            # Alimentar fato_lineup
+            # 2. Alimentar fato_lineup
             colunas_fato = [
                 'lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista',
                 'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
             ]
-            
-            df_fato = df_final[colunas_fato].copy()
-            print(f"📦 Sucesso: {len(df_fato)} navios consolidados.")
-            safe_load_to_bq(df_fato, "fato_lineup")
+            print(f"📦 Sucesso: {len(df_final)} registros preparados para o BigQuery.")
+            safe_load_to_bq(df_final[colunas_fato], "fato_lineup")
+        else:
+            print("⚠️ Nenhuma linha válida após conversão de datas.")
+
+    except Exception as e:
+        print(f"❌ Erro fatal no processamento: {e}")
 
 if __name__ == "__main__":
     processar_operacao()
