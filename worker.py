@@ -85,15 +85,14 @@ def monitor_contingencias_batch():
     safe_load_to_bq(df_nlp, "fato_contingencias_nlp")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura em tempo real: {datetime.now()}")
+    print(f"🚀 Iniciando captura em tempo real (Modo Blindado): {datetime.now()}")
     
     url_carga = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
     
     df_bruto = extrair_dados_porto(url_carga)
     
     if not df_bruto.empty:
-        # Mapeamento Inteligente (Procura palavras-chave nas colunas limpas)
-        # O site do Porto concatena nomes, ex: 'solidos_a_granel_navio_ship'
+        # 1. MAPEAMENTO POR PALAVRA-CHAVE
         mapeamento = {}
         target_keys = {
             'ship_id': 'imo',
@@ -104,19 +103,16 @@ def processar_operacao():
             'terminal': 'terminal'
         }
 
+        # Identificamos quais colunas sujas correspondem aos nossos campos
         for destino, keyword in target_keys.items():
             for col_real in df_bruto.columns:
                 if keyword in col_real:
                     mapeamento[col_real] = destino
         
+        # Criamos o DataFrame final apenas com o que mapeamos
         df_final = df_bruto.rename(columns=mapeamento)
 
-        # Garante que colunas essenciais existam
-        for col in target_keys.keys():
-            if col not in df_final.columns:
-                df_final[col] = None
-
-        # Tratamento de Tipos
+        # 2. TRATAMENTO DE DADOS
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
         df_final['quantidade_estimada'] = pd.to_numeric(
             df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
@@ -124,26 +120,40 @@ def processar_operacao():
         ).fillna(0)
         
         df_final['inserido_em'] = datetime.utcnow()
-        df_final = df_final[df_final['ship_id'].notnull()].copy()
-
-        # 1. Povoar dim_navio (Cadastro)
-        if not df_final.empty:
-            df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates()
-            safe_load_to_bq(df_dim, "dim_navio")
-
-        # 2. Povoar fato_lineup (Apenas colunas que o BQ aceita)
         df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
         df_final['status_atual'] = 'Esperado'
         df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
 
-        colunas_fato = [
+        # --- 3. ALIMENTAR DIM_NAVIO ---
+        # Filtramos APENAS as duas colunas necessárias para a dimensão
+        if 'ship_id' in df_final.columns and 'nome_navio' in df_final.columns:
+            df_dim = df_final[df_final['ship_id'].notnull()][['ship_id', 'nome_navio']].drop_duplicates()
+            if not df_dim.empty:
+                safe_load_to_bq(df_dim, "dim_navio")
+
+        # --- 4. ALIMENTAR FATO_LINEUP (A MUDANÇA CRUCIAL AQUI) ---
+        # Definimos exatamente o que a tabela fato espera (9 colunas)
+        colunas_vip = [
             'lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista',
             'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
         ]
         
-        # Filtra apenas o que é fato e remove datas nulas (que causam erro no BQ)
-        df_fato = df_final[colunas_fato].dropna(subset=['data_chegada_prevista']).copy()
+        # Criamos um DataFrame NOVO contendo apenas as colunas VIP e que existem no df_final
+        # Isso garante que NENHUMA coluna "suja" (tipo LIQUIDO A GRANEL...) entre no upload
+        colunas_presentes = [c for c in colunas_vip if c in df_final.columns]
+        df_fato = df_final[colunas_presentes].copy()
+
+        # Removemos linhas onde o ship_id ou data são nulos para não quebrar o BQ
+        df_fato = df_fato.dropna(subset=['ship_id', 'data_chegada_prevista'])
+
+        # Se faltar alguma coluna VIP no scrape, criamos ela vazia para manter o schema
+        for col in colunas_vip:
+            if col not in df_fato.columns:
+                df_fato[col] = None
+
+        print(f"📦 Preparado para subir {len(df_fato)} navios. Colunas no pacote: {df_fato.columns.tolist()}")
         
+        # Disparo final
         safe_load_to_bq(df_fato, "fato_lineup")
 
 if __name__ == "__main__":
