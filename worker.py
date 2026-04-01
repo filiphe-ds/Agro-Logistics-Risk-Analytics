@@ -29,7 +29,7 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro BQ {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura direta: {datetime.now()}")
+    print(f"🚀 Iniciando captura direta (Ajuste de Tipos): {datetime.now()}")
     url = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
     
     try:
@@ -38,8 +38,6 @@ def processar_operacao():
         tabelas = soup.find_all('table')
         
         registros_limpos = []
-
-        # Palavras-chave para identificar as colunas que queremos
         mapeamento = {
             'ship_id': 'imo',
             'nome_navio': 'navio',
@@ -51,21 +49,18 @@ def processar_operacao():
 
         for tab in tabelas:
             df = pd.read_html(io.StringIO(str(tab)))[0]
-            # Achata o cabeçalho se for multinível
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = [' '.join(col).lower() for col in df.columns.values]
             else:
                 df.columns = [str(c).lower() for c in df.columns]
 
-            # Itera nas linhas da tabela
             for _, row in df.iterrows():
                 item = {}
-                # Para cada campo que queremos, procuramos a coluna que contém a palavra-chave
                 for campo, keyword in mapeamento.items():
                     col_alvo = next((c for c in df.columns if keyword in c), None)
                     item[campo] = row[col_alvo] if col_alvo else None
                 
-                # Só adiciona se tiver pelo menos o ID do navio (IMO)
+                # Só adiciona se tiver o IMO
                 if pd.notnull(item['ship_id']):
                     registros_limpos.append(item)
 
@@ -73,28 +68,49 @@ def processar_operacao():
             print("⚠️ Nenhum dado encontrado.")
             return
 
-        # Monta o DataFrame final sem chaves duplicadas (é uma lista de dicts!)
         df_final = pd.DataFrame(registros_limpos).drop_duplicates()
 
-        # Tratamento simples de tipos
+        # --- O PULO DO GATO: CONVERSÃO DE TIPOS ---
+        
+        # 1. ship_id como STRING (Remove o .0 se houver)
+        df_final['ship_id'] = df_final['ship_id'].astype(str).str.split('.').str[0]
+        
+        # 2. data_chegada como TIMESTAMP
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
         df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
-        df_final['quantidade_estimada'] = pd.to_numeric(df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).replace(',', '.', regex=False), errors='coerce').fillna(0)
         
+        # 3. quantidade como FLOAT
+        df_final['quantidade_estimada'] = pd.to_numeric(
+            df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
+            errors='coerce'
+        ).fillna(0.0).astype(float)
+        
+        # 4. Outros campos como STRING
         df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
         df_final['status_atual'] = 'Esperado'
         df_final['inserido_em'] = datetime.utcnow()
 
-        # Remove nulos críticos
+        # Limpeza final de nulos críticos
         df_final = df_final.dropna(subset=['data_chegada_prevista', 'ship_id'])
 
-        # 1. Povoar dim_navio
-        df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates()
-        safe_load_to_bq(df_dim, "dim_navio")
+        if not df_final.empty:
+            # 1. Povoar dim_navio (Apenas ship_id e nome)
+            df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates().astype(str)
+            safe_load_to_bq(df_dim, "dim_navio")
 
-        # 2. Povoar fato_lineup
-        colunas_fato = ['lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista', 'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em']
-        safe_load_to_bq(df_final[colunas_fato], "fato_lineup")
+            # 2. Povoar fato_lineup
+            colunas_fato = ['lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista', 
+                            'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em']
+            
+            df_fato = df_final[colunas_fato].copy()
+            
+            # Garantia final de tipos para o Pyarrow não reclamar
+            df_fato['ship_id'] = df_fato['ship_id'].astype(str)
+            df_fato['terminal'] = df_fato['terminal'].astype(str)
+            df_fato['commodity'] = df_fato['commodity'].astype(str)
+            
+            print(f"📦 Sucesso: {len(df_fato)} navios prontos para o BigQuery.")
+            safe_load_to_bq(df_fato, "fato_lineup")
 
     except Exception as e:
         print(f"❌ Erro fatal: {e}")
