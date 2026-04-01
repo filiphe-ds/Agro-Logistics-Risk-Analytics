@@ -152,14 +152,28 @@ def monitor_contingencias():
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    print(f"🤖 Invocando o Robô de Dados ({datetime.now().strftime('%d/%m %H:%M')})")
+    print(f"🚀 INICIANDO OPERAÇÃO DE RESGATE ({datetime.now()})")
     
-    coletar_clima()
-    
-    dados_brutos = extrair_lineup()
-    processar_e_subir_lineup(dados_brutos)
-    
-    # Executa o novo monitor de notícias
-    monitor_contingencias()
-    
-    print("🏁 Robô finalizou a rodada com sucesso!")
+    try:
+        # Teste de Clima
+        print("1. Testando Clima...")
+        coletar_clima()
+        
+        # Teste de Line-up
+        print("2. Testando Line-up...")
+        dados = extrair_lineup()
+        if dados is not None:
+            print(f"📊 Colunas encontradas: {dados.columns.tolist()}")
+            print(f"📊 Primeiras linhas: \n{dados.iloc[0]}") # Isso vai nos mostrar a DATA real no site
+            processar_e_subir_lineup(dados)
+        else:
+            print("❌ Falha crítica: O site do Porto não retornou a tabela de navios.")
+
+        # Teste de NLP
+        print("3. Testando NLP...")
+        monitor_contingencias()
+
+    except Exception as e:
+        print(f"💥 ERRO FATAL NO FLUXO: {e}")
+        # Forçamos o erro para o GitHub Actions avisar que falhou
+        exit(1)
