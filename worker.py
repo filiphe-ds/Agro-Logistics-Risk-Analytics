@@ -41,11 +41,10 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro no carregamento de {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura (Alinhada com Schema dim_navio): {datetime.now()}")
+    print(f"🚀 Iniciando captura (Deduplicação e Limpeza de Terminais): {datetime.now()}")
     url = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # Mapeamento estrito conforme o seu Schema da dim_navio e fato_lineup
     target_keys = {
         'ship_id': 'imo',
         'nome_navio': 'navio_ship',
@@ -67,7 +66,6 @@ def processar_operacao():
         for tab in tabelas_html:
             df_temp = pd.read_html(io.StringIO(str(tab)))[0]
             
-            # Padronização de colunas
             if isinstance(df_temp.columns, pd.MultiIndex):
                 df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
             else:
@@ -80,70 +78,67 @@ def processar_operacao():
                     mapeamento_tabela[destino] = col_match
 
             for _, row in df_temp.iterrows():
-                registro = {
-                    'lineup_id': str(uuid.uuid4()),
-                    'status_atual': 'Esperado',
-                    'inserido_em': datetime.utcnow(),
-                    'capacidade_ton': 0.0 
-                }
-                
+                # Geramos os dados base primeiro
+                reg = {}
                 for destino, col_origem in mapeamento_tabela.items():
-                    registro[destino] = row[col_origem]
+                    reg[destino] = row[col_origem]
                 
-                if pd.notnull(registro.get('ship_id')) and pd.notnull(registro.get('nome_navio')):
-                    lista_final_registros.append(registro)
+                if pd.notnull(reg.get('ship_id')) and pd.notnull(reg.get('nome_navio')):
+                    lista_final_registros.append(reg)
 
         if not lista_final_registros:
-            print("⚠️ Nenhum dado bruto encontrado nas tabelas do porto.")
             return
 
-        df_final = pd.DataFrame(lista_final_registros).drop_duplicates()
+        # Criamos o DataFrame
+        df_final = pd.DataFrame(lista_final_registros)
 
-        # --- TRATAMENTO DE TIPOS CRÍTICOS ---
-        # 1. ship_id: Impede que o Pyarrow veja como float64 (remove o .0)
+        # --- 1. LIMPEZA DE IDs (Crucial para a Unicidade) ---
         df_final['ship_id'] = df_final['ship_id'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
+
+        # --- 2. DEDUPLICAÇÃO POR NAVIO (Evita o inchaço na carga atual) ---
+        # Mantemos apenas um registro por navio nesta rodada do robô
+        df_final = df_final.drop_duplicates(subset=['ship_id'])
+
+        # --- 3. LIMPEZA RIGOROSA DO TERMINAL (Resolve os números no gráfico) ---
+        def limpar_terminal(valor):
+            v = str(valor).strip()
+            # Se for só número (como o IMO), tiver data (/) ou for curto demais, não é terminal
+            if v.isdigit() or '/' in v or len(v) < 3:
+                return "Área de Fundeio / Outros"
+            return v
         
-        # 2. Datas: Formato padrão BigQuery
+        df_final['terminal'] = df_final['terminal'].apply(limpar_terminal)
+
+        # --- 4. PREPARAÇÃO FINAL PARA O BIGQUERY ---
+        df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
+        df_final['status_atual'] = 'Esperado'
+        df_final['inserido_em'] = datetime.utcnow()
+        df_final['capacidade_ton'] = 0.0
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
-        
-        # 3. Terminal: Limpeza de "fantasmas" (datas que caem no campo terminal)
-        df_final['terminal'] = df_final['terminal'].apply(lambda x: 'Não Identificado' if '/' in str(x) or '202' in str(x) else str(x))
 
-        # --- 1. ALIMENTAR DIM_NAVIO (Schema Validado: 5 colunas) ---
-        colunas_dim_reais = ['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']
-        
-        for col in colunas_dim_reais:
-            if col not in df_final.columns:
-                df_final[col] = None if col != 'capacidade_ton' else 0.0
-
-        df_dim = df_final[colunas_dim_reais].drop_duplicates().copy()
-        df_dim['ship_id'] = df_dim['ship_id'].astype(str)
-        df_dim['capacidade_ton'] = df_dim['capacidade_ton'].astype(float)
-        
-        print(f"📦 Enviando {len(df_dim)} registros para dim_navio.")
+        # --- ENVIO PARA DIM_NAVIO ---
+        colunas_dim = ['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']
+        df_dim = df_final[colunas_dim].copy()
         safe_load_to_bq(df_dim, "dim_navio")
 
-        # --- 2. ALIMENTAR FATO_LINEUP ---
+        # --- ENVIO PARA FATO_LINEUP ---
         colunas_fato = [
             'lineup_id', 'ship_id', 'data_chegada_prevista', 'status_atual', 
             'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
         ]
-        
         df_fato = df_final[colunas_fato].copy()
-        df_fato['ship_id'] = df_fato['ship_id'].astype(str)
         df_fato['quantidade_estimada'] = pd.to_numeric(
             df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
             errors='coerce'
         ).fillna(0.0).astype(float)
         
-        # Remove registros sem data para não dar erro no BQ
         df_fato = df_fato.dropna(subset=['data_chegada_prevista']).copy()
         
-        print(f"📦 Enviando {len(df_fato)} registros para fato_lineup.")
+        print(f"📦 Sucesso: Enviando {len(df_fato)} navios únicos nesta rodada.")
         safe_load_to_bq(df_fato, "fato_lineup")
 
     except Exception as e:
-        print(f"❌ Erro fatal no fluxo de operação: {e}")
+        print(f"❌ Erro fatal: {e}")
 
 def monitor_contingencias_batch():
     print("📰 Monitorando notícias e contingências...")

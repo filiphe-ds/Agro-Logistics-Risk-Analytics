@@ -27,15 +27,20 @@ client = get_bigquery_client()
 
 # --- CARREGAMENTO DE DADOS (COM CACHE) ---
 
-@st.cache_data(ttl=600) # Atualiza o cache a cada 10 minutos
+@st.cache_data(ttl=600)
 def load_ship_data():
     project = client.project 
     query = f"""
-        SELECT *, 
-               FORMAT_TIMESTAMP('%d/%m/%Y %H:%M', inserido_em, 'America/Sao_Paulo') as data_formatada
-        FROM `{project}.logisticsdata.view_feature_store_ml`
-        WHERE ship_id IS NOT NULL
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY ship_id ORDER BY inserido_em DESC) = 1
+        SELECT * FROM (
+            SELECT *, 
+                   -- Normaliza o ID: transforma em String e remove o '.0'
+                   REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
+                   FORMAT_TIMESTAMP('%d/%m/%Y %H:%M', inserido_em, 'America/Sao_Paulo') as data_formatada
+            FROM `{project}.logisticsdata.view_feature_store_ml`
+        )
+        WHERE clean_id IS NOT NULL
+        -- Agora o particionamento é feito pelo ID limpo
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY clean_id ORDER BY inserido_em DESC) = 1
     """
     return client.query(query).to_dataframe()
 
