@@ -29,98 +29,94 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro BQ {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura direta (Correção de Tipos Pyarrow): {datetime.now()}")
+    print(f"🚀 Iniciando captura (Alinhada com Schema dim_navio): {datetime.now()}")
     url = "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/"
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, verify=False, timeout=30)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        tabelas = soup.find_all('table')
-        
-        registros_limpos = []
-        mapeamento = {
-            'ship_id': 'imo',
-            'nome_navio': 'navio',
-            'data_chegada_prevista': 'cheg',
-            'commodity': 'mercadoria',
-            'quantidade_estimada': 'peso',
-            'terminal': 'terminal'
-        }
+    # MAPEAMENTO RESTRITO AO SEU SCHEMA REAL
+    target_keys = {
+        'ship_id': 'imo',
+        'nome_navio': 'navio_ship',
+        'bandeira': 'flag',
+        'tipo_vessel': 'nav',             # O campo 'Nav' no site indica o tipo/longo curso
+        'data_chegada_prevista': 'chegarrival',
+        'commodity': 'mercadoria',
+        'quantidade_estimada': 'peso',
+        'terminal': 'terminal'
+    }
 
-        for tab in tabelas:
+    try:
+        res = requests.get(url, headers=headers, verify=False, timeout=30)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        tabelas_html = soup.find_all('table')
+        
+        lista_final_registros = []
+        
+        for tab in tabelas_html:
             df_temp = pd.read_html(io.StringIO(str(tab)))[0]
+            
             if isinstance(df_temp.columns, pd.MultiIndex):
-                df_temp.columns = [' '.join(col).lower() for col in df_temp.columns.values]
+                df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
             else:
-                df_temp.columns = [str(c).lower() for c in df_temp.columns]
+                df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
+            
+            mapeamento_tabela = {}
+            for destino, keyword in target_keys.items():
+                col_match = next((c for c in df_temp.columns if keyword in c), None)
+                if col_match:
+                    mapeamento_tabela[destino] = col_match
 
             for _, row in df_temp.iterrows():
-                item = {}
-                for campo, keyword in mapeamento.items():
-                    col_alvo = next((c for c in df_temp.columns if keyword in c), None)
-                    item[campo] = row[col_alvo] if col_alvo else None
+                registro = {
+                    'lineup_id': str(uuid.uuid4()),
+                    'status_atual': 'Esperado',
+                    'inserido_em': datetime.utcnow(),
+                    'capacidade_ton': 0.0 # Campo do seu schema, inicializado como float
+                }
                 
-                if pd.notnull(item['ship_id']):
-                    registros_limpos.append(item)
+                for destino, col_origem in mapeamento_tabela.items():
+                    registro[destino] = row[col_origem]
+                
+                if pd.notnull(registro.get('ship_id')) and pd.notnull(registro.get('nome_navio')):
+                    lista_final_registros.append(registro)
 
-        if not registros_limpos:
-            print("⚠️ Nenhum dado encontrado.")
+        if not lista_final_registros:
             return
 
-        # Montamos o DataFrame base
-        df_final = pd.DataFrame(registros_limpos).drop_duplicates()
+        df_final = pd.DataFrame(lista_final_registros).drop_duplicates()
 
-        # --- CORREÇÃO DE TIPOS PARA O PYARROW ---
-
-        # 1. ship_id: Converte para string, remove o '.0' e filtra 'nan'
-        # Usamos uma função anônima para garantir que '9292577.0' vire '9292577'
+        # --- TRATAMENTO DE TIPOS ---
         df_final['ship_id'] = df_final['ship_id'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
-        df_final = df_final[df_final['ship_id'] != 'nan'].copy()
-        
-        # 2. Datas: Garantir formato datetime64[ns]
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
-        df_final['data_atracacao_prevista'] = df_final['data_chegada_prevista']
         
-        # 3. Quantidade: Garantir float real
-        df_final['quantidade_estimada'] = pd.to_numeric(
-            df_final['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
-            errors='coerce'
-        ).fillna(0.0).astype(float)
+        # 1. ALIMENTAR DIM_NAVIO (Exatamente 5 colunas do seu schema)
+        colunas_dim_reais = ['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']
         
-        # 4. Metadados
-        df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
-        df_final['status_atual'] = 'Esperado'
-        df_final['inserido_em'] = datetime.utcnow()
+        # Garantimos que todas as colunas do seu schema existam no DataFrame
+        for col in colunas_dim_reais:
+            if col not in df_final.columns:
+                df_final[col] = None if col != 'capacidade_ton' else 0.0
 
-        # Filtro de sanidade
-        df_final = df_final.dropna(subset=['data_chegada_prevista', 'ship_id']).copy()
+        df_dim = df_final[colunas_dim_reais].drop_duplicates().copy()
+        # Forçamos tipos para bater com o BigQuery
+        df_dim['ship_id'] = df_dim['ship_id'].astype(str)
+        df_dim['capacidade_ton'] = df_dim['capacidade_ton'].astype(float)
+        
+        print(f"📦 Povoando dim_navio ({len(df_dim)} linhas) com schema validado.")
+        safe_load_to_bq(df_dim, "dim_navio")
 
-        if not df_final.empty:
-            # --- UPLOAD PARA DIM_NAVIO ---
-            df_dim = df_final[['ship_id', 'nome_navio']].drop_duplicates().copy()
-            # Forçamos o tipo object (string) no pandas antes do upload
-            df_dim['ship_id'] = df_dim['ship_id'].astype(str)
-            df_dim['nome_navio'] = df_dim['nome_navio'].astype(str)
-            
-            print(f"📦 Subindo {len(df_dim)} navios para dim_navio...")
-            safe_load_to_bq(df_dim, "dim_navio")
-
-            # --- UPLOAD PARA FATO_LINEUP ---
-            colunas_fato = [
-                'lineup_id', 'ship_id', 'data_chegada_prevista', 'data_atracacao_prevista', 
-                'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
-            ]
-            df_fato = df_final[colunas_fato].copy()
-            
-            # Garantia final de conversão para o fiscal de tipos do BigQuery
-            df_fato['ship_id'] = df_fato['ship_id'].astype(str)
-            df_fato['terminal'] = df_fato['terminal'].astype(str).fillna('N/A')
-            df_fato['commodity'] = df_fato['commodity'].astype(str).fillna('N/A')
-            
-            print(f"📦 Subindo {len(df_fato)} registros para fato_lineup...")
-            safe_load_to_bq(df_fato, "fato_lineup")
-        else:
-            print("⚠️ Sem dados válidos após tratamento de tipos.")
+        # 2. ALIMENTAR FATO_LINEUP (Mantendo o que já funciona)
+        colunas_fato = [
+            'lineup_id', 'ship_id', 'data_chegada_prevista', 'status_atual', 
+            'terminal', 'commodity', 'quantidade_estimada', 'inserido_em'
+        ]
+        # Limpeza rápida de terminais que capturam datas por erro
+        df_final['terminal'] = df_final['terminal'].apply(lambda x: 'Não Identificado' if '/' in str(x) else x)
+        
+        df_fato = df_final[colunas_fato].copy()
+        df_fato['ship_id'] = df_fato['ship_id'].astype(str)
+        
+        safe_load_to_bq(df_fato, "fato_lineup")
 
     except Exception as e:
         print(f"❌ Erro fatal: {e}")
