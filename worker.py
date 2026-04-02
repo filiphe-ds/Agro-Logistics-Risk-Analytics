@@ -26,112 +26,86 @@ def limpar_nome_coluna(col):
     return col[:300]
 
 def safe_load_to_bq(df, table_name):
-    """Método Batch Load: Único aceito no Free Tier do BigQuery"""
-    if df.empty: 
-        print(f"⚠️ {table_name}: DataFrame vazio, pulando carga.")
-        return
-    
+    if df.empty: return
     table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}"
-    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+    
+    # MUDE DE "WRITE_APPEND" PARA "WRITE_TRUNCATE" SÓ DESTA VEZ
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     
     try:
         client.load_table_from_dataframe(df, table_id, job_config=job_config).result()
-        print(f"✅ {table_name}: {len(df)} linhas carregadas.")
+        print(f"✅ {table_name}: Tabela resetada e atualizada com dados limpos!")
     except Exception as e:
-        print(f"❌ Erro no carregamento de {table_name}: {e}")
+        print(f"❌ Erro BQ: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura Multi-Fonte (Esperados + Atracados): {datetime.now()}")
+    print(f"🚀 Iniciando captura (Versão Cirúrgica): {datetime.now()}")
     
-    # Fontes de Dados
     fontes = [
         {"url": "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/", "status": "Esperado"},
         {"url": "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/atracados-porto-terminais/", "status": "Atracado"}
     ]
     
     headers = {"User-Agent": "Mozilla/5.0"}
-    target_keys = {
-        'ship_id': 'imo',
-        'nome_navio': 'navio_ship',
-        'bandeira': 'flag',
-        'tipo_vessel': 'nav',             
-        'data_chegada_prevista': 'chegarrival',
-        'commodity': 'mercadoria',
-        'quantidade_estimada': 'peso',
-        'terminal': 'terminal'
-    }
-
-    lista_geral = []
+    lista_final_registros = []
 
     try:
         for fonte in fontes:
-            print(f"🛰️ Coletando {fonte['status']}...")
             res = requests.get(fonte['url'], headers=headers, verify=False, timeout=30)
             soup = BeautifulSoup(res.text, 'html.parser')
-            tabelas_html = soup.find_all('table')
-            
-            for tab in tabelas_html:
+            for tab in soup.find_all('table'):
                 df_temp = pd.read_html(io.StringIO(str(tab)))[0]
                 
-                # Padronização de colunas
+                # Normalização de colunas
                 if isinstance(df_temp.columns, pd.MultiIndex):
                     df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
                 else:
                     df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
-                
-                # Mapeamento
-                mapeamento_tabela = {dest: next((c for c in df_temp.columns if key in c), None) for dest, key in target_keys.items()}
 
                 for _, row in df_temp.iterrows():
-                    reg = {'status_atual': fonte['status'], 'inserido_em': datetime.utcnow(), 'capacidade_ton': 0.0}
-                    for dest, col_origem in mapeamento_tabela.items():
-                        if col_origem: reg[dest] = row[col_origem]
+                    # MAPEAMENTO DIRETO E RÍGIDO (Resolve nome_navio vs tipo_vessel)
+                    reg = {
+                        'ship_id': str(row.get(next((c for c in df_temp.columns if 'imo' in c), ''))).split('.')[0],
+                        'nome_navio': row.get(next((c for c in df_temp.columns if 'navio_ship' in c), None)),
+                        'tipo_vessel': row.get(next((c for c in df_temp.columns if c.endswith('_nav')), None)), # Pega a coluna que termina em '_nav'
+                        'bandeira': row.get(next((c for c in df_temp.columns if 'flag' in c), None)),
+                        'terminal': str(row.get(next((c for c in df_temp.columns if 'terminal' in c), ''))).strip(),
+                        'commodity': row.get(next((c for c in df_temp.columns if 'mercadoria' in c), None)),
+                        'quantidade_estimada': row.get(next((c for c in df_temp.columns if 'peso' in c), 0)),
+                        'data_chegada_prevista': row.get(next((c for c in df_temp.columns if 'chegarrival' in c), None)),
+                        'status_atual': fonte['status'],
+                        'inserido_em': datetime.utcnow(),
+                        'capacidade_ton': 0.0
+                    }
                     
-                    if pd.notnull(reg.get('ship_id')) and pd.notnull(reg.get('nome_navio')):
+                    if reg['ship_id'] != 'nan' and len(reg['ship_id']) > 3:
+                        # Limpeza do Terminal (Fim dos números no gráfico)
+                        if reg['terminal'].isdigit() or '/' in reg['terminal'] or len(reg['terminal']) < 3:
+                            reg['terminal'] = "Área de Fundeio / Outros"
+                            
                         lista_final_registros.append(reg)
 
         if not lista_final_registros: return
+        df_final = pd.DataFrame(lista_final_registros).drop_duplicates(subset=['ship_id'])
 
-        df_final = pd.DataFrame(lista_final_registros)
-
-        # --- LIMPEZA E DEDUPLICAÇÃO ---
-        df_final['ship_id'] = df_final['ship_id'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
-        
-        # O segredo: se um navio aparece como esperado e atracado, o "Atracado" vence (sort e drop_duplicates)
-        df_final = df_final.sort_values(['ship_id', 'status_atual'], ascending=[True, True]).drop_duplicates(subset=['ship_id'], keep='first')
-
-        # --- LIMPEZA DE TERMINAL (Fim dos números no gráfico) ---
-        def limpar_terminal(v):
-            v = str(v).strip()
-            # Se for IMO (7+ dígitos), data (/) ou ano (202), limpamos
-            if v.isdigit() or '/' in v or '202' in v or len(v) < 3:
-                return "Área de Fundeio / Outros"
-            return v
-        
-        df_final['terminal'] = df_final['terminal'].apply(limpar_terminal)
-
-        # --- TRATAMENTO FINAL E UPLOAD ---
-        df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
-        df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce')
-        
-        # 1. dim_navio (Cadastro)
-        df_dim = df_final[['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']].drop_duplicates().copy()
+        # --- ENVIO DIM_NAVIO ---
+        df_dim = df_final[['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']].copy()
         safe_load_to_bq(df_dim, "dim_navio")
 
-        # 2. fato_lineup
+        # --- ENVIO FATO_LINEUP ---
+        # Ajuste de tipos para o seu Schema (DATE e TIMESTAMP)
+        df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce').dt.date
+        df_final['lineup_id'] = [str(uuid.uuid4()) for _ in range(len(df_final))]
+        
         colunas_fato = ['lineup_id', 'ship_id', 'data_chegada_prevista', 'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em']
         df_fato = df_final[colunas_fato].copy()
         
-        # Conversão numérica de peso
-        df_fato['quantidade_estimada'] = pd.to_numeric(
-            df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
-            errors='coerce'
-        ).fillna(0.0)
+        # Limpeza de peso
+        df_fato['quantidade_estimada'] = pd.to_numeric(df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0.0)
+        
+        safe_load_to_bq(df_fato.dropna(subset=['data_chegada_prevista']), "fato_lineup")
 
-        safe_load_to_bq(df_fato, "fato_lineup")
-
-    except Exception as e:
-        print(f"❌ Erro: {e}")
+    except Exception as e: print(f"❌ Erro: {e}")
 
 def monitor_contingencias_batch():
     print("📰 Monitorando notícias e contingências...")
