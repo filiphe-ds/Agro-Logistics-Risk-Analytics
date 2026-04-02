@@ -26,17 +26,19 @@ def limpar_nome_coluna(col):
     return col[:300]
 
 def safe_load_to_bq(df, table_name):
-    if df.empty: return
-    table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}"
+    """Método Batch Load: Único aceito no Free Tier do BigQuery"""
+    if df.empty: 
+        print(f"⚠️ {table_name}: DataFrame vazio, pulando carga.")
+        return
     
-    # MUDE DE "WRITE_APPEND" PARA "WRITE_TRUNCATE" SÓ DESTA VEZ
-    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+    table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}"
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
     
     try:
         client.load_table_from_dataframe(df, table_id, job_config=job_config).result()
-        print(f"✅ {table_name}: Tabela resetada e atualizada com dados limpos!")
+        print(f"✅ {table_name}: {len(df)} linhas carregadas.")
     except Exception as e:
-        print(f"❌ Erro BQ: {e}")
+        print(f"❌ Erro no carregamento de {table_name}: {e}")
 
 def processar_operacao():
     print(f"🚀 Iniciando captura (Versão Cirúrgica): {datetime.now()}")
