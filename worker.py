@@ -1,9 +1,3 @@
-Filiphe, você tem toda a razão. No calor da correção do mapeamento, deixei a função auxiliar limpar_nome_coluna de fora do bloco de código, o que causou o erro de "NameError". Peço desculpas por esse tropeço — vamos resolver isso agora com o código completo e unificado para que não falte nenhuma peça no quebra-cabeça.
-
-Aqui está o worker.py integral. Ele contém a limpeza de nomes, o mapeamento para o seu schema real da dim_navio e a trava para não deixar datas "poluirem" o campo de terminais.
-
-🛠️ Código Integral: worker.py (Versão Final Estabilizada)
-Python
 import os
 import pandas as pd
 import numpy as np
