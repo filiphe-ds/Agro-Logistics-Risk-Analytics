@@ -163,11 +163,9 @@ try:
 
             # 2. Adicionamos os pontos (POIs) do seu BigQuery
             for index, row in df_map.iterrows():
-                # Define a cor: Vermelho para alerta, Azul para normal
                 cor_ponto = "red" if row['alerta_critico'] else "blue"
                 icone = "cloud-showers-heavy" if row['alerta_critico'] else "ship"
                 
-                # Criamos um balão informativo (Popup)
                 popup_text = f"""
                 <b>{row['nome_ponto']}</b><br>
                 Tipo: {row['tipo_ponto']}<br>
@@ -175,7 +173,6 @@ try:
                 Vento: {row['velocidade_vento']}km/h
                 """
                 
-                # Adiciona o marcador no mapa
                 folium.Marker(
                     location=[row['lat'], row['lon']],
                     popup=folium.Popup(popup_text, max_width=300),
@@ -191,15 +188,16 @@ try:
         except Exception as map_e:
             st.error(f"Erro ao renderizar o Radar: {map_e}")
 
-     # --- ABA 3: LINE-UP DETALHADO ---
-     with tab_detalhe:
+    # --- ABA 3: LINE-UP DETALHADO ---
+    with tab_detalhe:
         st.subheader("🔍 Consulta Detalhada de Embarcações")
         st.markdown("Lista completa de navios ativos com destaque para riscos climáticos.")
         
         # Filtro rápido na tabela
         search = st.text_input("Filtrar por Navio ou Terminal:")
         if search:
-            df_filtered = df_ships[df_ships.apply(lambda row: search.lower() in str(row).lower(), axis=1)]
+            # Filtro case-insensitive em todas as colunas
+            df_filtered = df_ships[df_ships.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
         else:
             df_filtered = df_ships
 
