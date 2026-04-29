@@ -90,10 +90,10 @@ try:
     col_status_1, col_status_2 = st.columns(2)
     
     with col_status_1:
-    if not df_ships.empty:
+    	if not df_ships.empty:
         # Pegamos a data mais recente de toda a tabela para provar que o robô passou por aqui
-        ultima_atualizacao = df_ships['inserido_em'].max().strftime('%d/%m/%Y %H:%M')
-        st.info(f"🤖 **Monitor de Navios:** Última varredura no Porto em {ultima_atualizacao}")
+            ultima_atualizacao = df_ships['inserido_em'].max().strftime('%d/%m/%Y %H:%M')
+            st.info(f"🤖 **Monitor de Navios:** Última varredura no Porto em {ultima_atualizacao}")
 
     with col_status_2:
         if nlp_event is not None:
