@@ -1,20 +1,39 @@
 # ⚖️ Governança e Metodologia de Dados
 
-## 1. Dicionário de Dados (fato_lineup)
-- `ship_id`: Identificador único (IMO) normalizado como String para evitar erros de casting.
-- `terminal`: Campo normalizado. Valores numéricos ou inconsistentes são classificados como 'Fundeio/Outros'.
-- `status_atual`: 'Esperado' ou 'Atracado' (Prioridade para status real em caso de duplicidade).
+Este documento detalha as definições técnicas, a lógica de negócio e os critérios de qualidade aplicados ao projeto **Agro-Logistics Risk Analytics**.
 
-## 2. Metodologia do Modelo de ML
-O modelo utiliza um **Random Forest Regressor** para estimar a probabilidade de atraso baseando-se em:
-- **Precipitação (mm):** Impacto direto na produtividade de terminais de grãos.
-- **Score NLP:** Risco derivado de notícias sobre acessos terrestres.
-- **Volume Estimado:** Influência do tamanho da carga no tempo de berço.
+## 1. Dicionário de Dados Críticos
+
+### Tabela: `fato_lineup`
+- `ship_id`: Identificador único (IMO) normalizado. Armazenado como String para garantir unicidade e evitar distorções de ponto flutuante.
+- `terminal`: Campo de texto normalizado. Registros identificados como números puros ou datas são automaticamente reclassificados como 'Área de Fundeio / Outros'.
+- `status_atual`: Status dinâmico (Esperado/Atracado). Em caso de conflito, a lógica de ingestão prioriza o status 'Atracado'.
+- `quantidade_estimada`: Volume de carga em toneladas (Float).
+
+## 2. Metodologia de Machine Learning
+
+O risco de atraso é calculado através de um modelo **Random Forest Regressor**, utilizando as seguintes variáveis de entrada (features):
+
+- **rain_feature:** Precipitação acumulada em mm (Fonte: Visual Crossing).
+- **wind_feature:** Velocidade do vento em km/h.
+- **nlp_risk_score:** Risco logístico derivado de análise de texto de notícias locais.
+- **quantidade_estimada:** Impacto do volume de carga no tempo de operação.
+
+### Lógica de Probabilidade
+A probabilidade final exibida no dashboard representa a confiança do modelo em um cenário de atraso superior à janela operacional padrão.
+
+$$P(\text{Risco}) = f(\text{Clima}, \text{Volume}, \text{NLP})$$
 
 ## 3. Critérios de Auditoria (Backtesting)
-A performance é calculada através da `view_performance_ml`:
-- **Definição de Atraso:** Consideramos atraso real qualquer atracação ocorrida 6 horas após a janela prevista original.
-- **Métrica de Sucesso:** Erro Médio Absoluto (MAE) comparando a Probabilidade Prevista vs. Evento Real (Binário 0 ou 1).
 
-## 4. Ética e Privacidade
-O projeto utiliza exclusivamente dados de fontes públicas (Porto de Santos, Ecovias, G1). Não há coleta de PII (Personally Identifiable Information).
+A acurácia do sistema é medida continuamente através da View `view_performance_ml`, que utiliza os seguintes critérios:
+
+1.  **Confronto:** Comparamos a primeira predição feita para o navio (enquanto 'Esperado') com o momento real de atracação.
+2.  **Definição de Atraso:** Um evento é classificado como "Atraso Real" se a atracação ocorrer **6 horas** após o horário previsto original.
+3.  **Métrica de Erro:** Utilizamos o **MAE (Mean Absolute Error)** para medir a distância entre a probabilidade prevista e o evento binário ocorrido.
+
+## 4. Pipeline de Qualidade (Data Quality)
+
+- **Deduplicação:** O robô realiza o `drop_duplicates` baseado no IMO antes de cada carga.
+- **Normalização:** Conversão forçada de Timestamps para garantir que o BigQuery e o Streamlit operem no fuso horário 'America/Sao_Paulo'.
+- **Resiliência:** Uso de `WRITE_APPEND` para manutenção de histórico e `WRITE_TRUNCATE` para resets controlados de ambiente.
