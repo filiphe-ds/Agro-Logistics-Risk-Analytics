@@ -4,33 +4,37 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![BigQuery](https://img.shields.io/badge/Google_BigQuery-Data_Warehouse-blue)](https://cloud.google.com/bigquery)
 
-**Monitoramento de Risco de Demurrage e Condições Logísticas em Tempo Real para o Porto de Santos.**
-[Link do app](https://agro-logistics-risk-analytics-km6au6byuklbh79jujlxjf.streamlit.app/)
+**Inteligência Preditiva e Monitoramento de Risco Logístico em Tempo Real para o Porto de Santos.**
 
 ---
 
 ## 🎯 Sobre o Projeto
 
-O **Agro-Logistics Risk Analytics** é uma plataforma de inteligência de dados desenvolvida para mitigar custos de **Demurrage** no setor de agronegócio. O sistema monitora o line-up de navios, condições meteorológicas e eventos logísticos críticos (bloqueios em rodovias e paralisações), utilizando **Machine Learning** para prever a probabilidade de atrasos.
-
-### 🚀 Funcionalidades Principais
-
-- **Monitor de Navios (Line-up):** Raspagem automática de dados do Porto de Santos, processando o fluxo de embarcações esperadas.
-- **Inteligência de Notícias (NLP):** Motor de scraping que monitora **Ecovias** (Sistema Anchieta-Imigrantes) e **G1 Santos**, convertendo notícias em um **Score de Risco Logístico** automatizado.
-- **Previsão de Risco com ML:** Modelo de classificação (Random Forest) que integra volume de carga, condições climáticas e risco de acesso para prever atrasos operacionais.
-- **Radar Geográfico:** Visualização espacial em tempo real utilizando **Folium**, mapeando pontos críticos de tráfego e terminais sob alerta climático.
+O **Agro-Logistics Risk Analytics** é uma plataforma de inteligência de dados desenvolvida para mitigar custos de **Demurrage** no setor de agronegócio. O sistema unifica o monitoramento do line-up de navios, condições meteorológicas e eventos logísticos críticos (bloqueios em rodovias e paralisações), utilizando **Machine Learning** para prever a probabilidade de atrasos operacionais.
 
 ---
 
-## 🏗️ Arquitetura Técnica
+## 🏗️ Arquitetura e Governança
 
-O projeto utiliza uma estrutura moderna de **Modern Data Stack**:
+O projeto utiliza uma estrutura moderna de **Modern Data Stack** focada em auditabilidade e integridade:
 
-1.  **Ingestão:** Robô autônomo (`worker.py`) rodando via **GitHub Actions** a cada hora.
-2.  **Processamento:** Limpeza e transformação de dados com **Pandas** e Python.
+1.  **Ingestão:** Robô autônomo (`worker.py`) com scraping resiliente e deduplicação inteligente.
+2.  **Processamento:** Normalização de tipos e limpeza de dados via **Pandas**.
 3.  **Storage:** Data Warehouse escalável no **Google BigQuery**.
-4.  **Interface:** Dashboard interativo desenvolvido em **Streamlit**.
-5.  **Geospatial:** Dados geográficos armazenados como `GEOGRAPHY` no BigQuery e renderizados com Folium.
+4.  **Auditabilidade:** Camada de performance que confronta predições da IA com dados reais de atracação.
+5.  **Interface:** Dashboard interativo em **Streamlit** com visualização geoespacial.
+
+> [!IMPORTANT]
+> **Consulte a [Documentação de Governança](GOVERNANCE.md)** para detalhes sobre o Dicionário de Dados, Lógica do Modelo de ML e Critérios de Auditoria.
+
+---
+
+## 🚀 Funcionalidades Principais
+
+- **Monitor de Operações (Fluxo vs Volume):** Visualização de barras agrupadas que destaca terminais congestionados mesmo com dados de pesagem ausentes.
+- **Inteligência de Notícias (NLP):** Motor que monitora **Ecovias** e **G1 Santos**, convertendo notícias em um **Score de Risco Logístico** matemático.
+- **Auditoria de Performance:** Aba dedicada à validação da acurácia do modelo, exibindo o Erro Médio Absoluto (MAE) em tempo real.
+- **Radar Geográfico:** Mapeamento espacial utilizando **Folium**, integrando alertas críticos de tráfego e clima.
 
 ---
 
@@ -52,27 +56,19 @@ O projeto utiliza uma estrutura moderna de **Modern Data Stack**:
 
 ### Instalação Local
 1. Clone o repositório:
+   ```bash
    git clone [https://github.com/seu-usuario/agro-logistics-risk-analytics.git](https://github.com/seu-usuario/agro-logistics-risk-analytics.git)
 
-2. Instale as dependências:
-
-  pip install -r requirements.txt
-
-3. Configure o arquivo .env com suas credenciais:
-
-  Code snippet
-  PROJECT_ID="seu-projeto-gcp"
-  VC_API_KEY="sua-chave-weather"
-
-4. Execute o app:
-  streamlit run app.py
-
 ## 📈 Próximos Passos (Roadmap)
-[ ] Implementação de Deep Learning para análise de sentimento mais refinada das notícias.
+[x] Engenharia de Dados e Scraping Multi-fonte.
 
-[ ] Criação de alertas automáticos via Telegram/E-mail para riscos acima de 80%.
+[x] Implementação de NLP e Modelo Preditivo v1.
 
-[ ] Inclusão de dados históricos de safras para análise de sazonalidade.
+[x] Sistema de Auditoria de Performance e Backtesting.
+
+[ ] Automação de Alertas proativos via Telegram/Webhooks.
+
+[ ] Integração com dados satelitais AIS para rastreio oceânico.
 
 Desenvolvido por Filiphe – [LinkedIn](https://www.linkedin.com/in/filipheassuncao/)
 
