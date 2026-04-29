@@ -76,6 +76,15 @@ def load_map_data():
     """
     return client.query(query).to_dataframe()
 
+@st.cache_data(ttl=600)
+def load_performance_data():
+    project = client.project
+    query = f"""
+        SELECT * FROM `{project}.logisticsdata.view_performance_ml` 
+        ORDER BY data_atracacao_real DESC
+    """
+    return client.query(query).to_dataframe()
+
 # --- INTERFACE PRINCIPAL ---
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
@@ -104,10 +113,11 @@ try:
             else: st.success("🟢 **Acessos Normais:** Ecovias e Porto operando sem alertas.")
 
     # --- Criação das Abas (Tabs) ---
-    tab_monitor, tab_radar, tab_detalhe = st.tabs([
+    tab_monitor, tab_radar, tab_detalhe, tab_ia = st.tabs([
         "📊 Monitor de Operações", 
         "🛰️ Radar Geográfico", 
-        "🔍 Line-up Detalhado"
+        "🔍 Line-up Detalhado",
+        "🎯 Performance da IA"
     ])
 
     # --- ABA 1: MONITOR DE OPERAÇÕES ---
@@ -207,6 +217,41 @@ try:
             use_container_width=True,
             hide_index=True
         )
+
+    # --- ABA 4: PERFORMANCE DA IA ---
+    with tab_ia:
+        st.subheader("🎯 Auditoria de Precisão do Modelo")
+        df_perf = load_performance_data()
+
+        if not df_perf.empty:
+            # Cálculos de Performance
+            mae = df_perf['erro_absoluto'].mean()
+            acuracia = (1 - mae) * 100
+            total_validados = len(df_perf)
+
+            col_p1, col_p2, col_p3 = st.columns(3)
+            with col_p1:
+                st.metric("Acurácia Real", f"{acuracia:.1f}%", help="Percentual de acerto do modelo comparado à realidade do Porto.")
+            with col_p2:
+                st.metric("Erro Médio (MAE)", f"{mae:.2f}", delta_color="inverse")
+            with col_p3:
+                st.metric("Navios Auditados", total_validados)
+
+            st.divider()
+
+            # Gráfico de Predição vs Realidade
+            st.write("### Histórico de Confronto: Predição vs Realidade")
+            
+            # Criando uma coluna visual para facilitar a leitura
+            df_perf['Resultado'] = df_perf['ocorreu_atraso_real'].apply(lambda x: "🔴 Atrasou" if x == 1 else "🟢 No Prazo")
+            
+            st.dataframe(
+                df_perf[['nome_navio', 'prob_atraso_prevista', 'Resultado', 'data_atracacao_real', 'erro_absoluto']],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("💡 A auditoria aparecerá assim que os primeiros navios 'Esperados' mudarem para o status 'Atracado'.")
 
 except Exception as e:
     st.error(f"Erro crítico na interface: {e}")
