@@ -208,7 +208,7 @@ try:
             df_filtered.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), 
             use_container_width=True,
             hide_index=True
-        )
+      )
 
 except Exception as e:
     st.error(f"Erro crítico na interface: {e}")
