@@ -90,9 +90,10 @@ try:
     col_status_1, col_status_2 = st.columns(2)
     
     with col_status_1:
-        if not df_ships.empty:
-            ultima_coleta = df_ships['data_formatada'].iloc[0]
-            st.info(f"🤖 **Monitor de Navios:** Atualizado em {ultima_coleta}")
+    if not df_ships.empty:
+        # Pegamos a data mais recente de toda a tabela para provar que o robô passou por aqui
+        ultima_atualizacao = df_ships['inserido_em'].max().strftime('%d/%m/%Y %H:%M')
+        st.info(f"🤖 **Monitor de Navios:** Última varredura no Porto em {ultima_atualizacao}")
 
     with col_status_2:
         if nlp_event is not None:
@@ -123,15 +124,51 @@ try:
         st.divider()
 
         # 2. Gráficos
-        st.subheader("📊 Análise de Volume por Terminal")
-        fig = px.bar(df_ships, x='terminal', y='quantidade_estimada', color='rain_feature',
-                     color_continuous_scale="Reds", labels={'quantidade_estimada': 'Volume (Ton)', 'rain_feature': 'Chuva (mm)'})
-        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("📊 Atividade por Terminal: Fluxo vs. Volume")
+        
+        # Preparamos os dados agrupando por terminal
+        df_agrupado = df_ships.groupby('terminal').agg(
+            qtd_navios=('ship_id', 'count'),
+            volume_total=('quantidade_estimada', 'sum')
+        ).reset_index().sort_values('qtd_navios', ascending=False)
 
-        # 3. Tabela
-        st.subheader("🔍 Monitor Detalhado de Embarcações")
-        # Destacamos em vermelho onde a chuva está mais forte
-        st.dataframe(df_ships.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), use_container_width=True)
+        # Criamos um gráfico com dois eixos ou barras agrupadas
+        # Aqui, vamos usar barras agrupadas para facilitar a comparação visual
+        import plotly.graph_objects as go
+
+        fig = go.Figure()
+
+        # Barra de Contagem de Navios
+        fig.add_trace(go.Bar(
+            x=df_agrupado['terminal'],
+            y=df_agrupado['qtd_navios'],
+            name='Qtd. de Navios',
+            marker_color='#0077b6',
+            text=df_agrupado['qtd_navios'],
+            textposition='auto',
+        ))
+
+        # Barra de Volume (em um eixo secundário para não achatar a contagem)
+        fig.add_trace(go.Bar(
+            x=df_agrupado['terminal'],
+            y=df_agrupado['volume_total'],
+            name='Volume Total (Ton)',
+            marker_color='#ef476f',
+            yaxis='y2',
+            opacity=0.7
+        ))
+
+        # Ajuste do Layout para dois eixos
+        fig.update_layout(
+            barmode='group',
+            yaxis=dict(title='Quantidade de Navios'),
+            yaxis2=dict(title='Volume Total (Toneladas)', overlaying='y', side='right'),
+            legend=dict(x=0, y=1.1, orientation='h'),
+            margin=dict(l=20, r=20, t=20, b=20)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("💡 Navios com volume não informado aparecem na contagem, mas não somam na tonelagem.")
 
     # --- ABA 2: RADAR GEOGRÁFICO ---
     with tab_radar:
