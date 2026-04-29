@@ -104,71 +104,53 @@ try:
             else: st.success("🟢 **Acessos Normais:** Ecovias e Porto operando sem alertas.")
 
     # --- Criação das Abas (Tabs) ---
-    tab_monitor, tab_radar = st.tabs(["📊 Monitor de Operações", "🛰️ Radar Geográfico"])
+    tab_monitor, tab_radar, tab_detalhe = st.tabs([
+        "📊 Monitor de Operações", 
+        "🛰️ Radar Geográfico", 
+        "🔍 Line-up Detalhado"
+    ])
 
     # --- ABA 1: MONITOR DE OPERAÇÕES ---
     with tab_monitor:
         # 1. KPIs Principais
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total de Navios", len(df_ships))
+            st.metric("Navios em Santos", len(df_ships))
         with col2:
             st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm")
         with col3:
-            # Score real do NLP vindo do BigQuery
             risco_logistico = nlp_event['score_risco'] * 100 if nlp_event is not None else 0
-            st.metric("Risco de Acessos (NLP)", f"{risco_logistico:.0f}%")
+            st.metric("Risco de Acessos", f"{risco_logistico:.0f}%")
         with col4:
-            st.metric("Prob. Média Atraso (ML)", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
+            st.metric("Prob. Média Atraso", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
 
         st.divider()
 
-        # 2. Gráficos
+        # 2. Gráfico de Atividade (Fluxo vs Volume)
         st.subheader("📊 Atividade por Terminal: Fluxo vs. Volume")
-        
-        # Preparamos os dados agrupando por terminal
         df_agrupado = df_ships.groupby('terminal').agg(
             qtd_navios=('ship_id', 'count'),
             volume_total=('quantidade_estimada', 'sum')
         ).reset_index().sort_values('qtd_navios', ascending=False)
 
-        # Criamos um gráfico com dois eixos ou barras agrupadas
-        # Aqui, vamos usar barras agrupadas para facilitar a comparação visual
         import plotly.graph_objects as go
-
         fig = go.Figure()
-
-        # Barra de Contagem de Navios
         fig.add_trace(go.Bar(
-            x=df_agrupado['terminal'],
-            y=df_agrupado['qtd_navios'],
-            name='Qtd. de Navios',
-            marker_color='#0077b6',
-            text=df_agrupado['qtd_navios'],
-            textposition='auto',
+            x=df_agrupado['terminal'], y=df_agrupado['qtd_navios'],
+            name='Qtd. de Navios', marker_color='#0077b6', text=df_agrupado['qtd_navios'], textposition='auto'
         ))
-
-        # Barra de Volume (em um eixo secundário para não achatar a contagem)
         fig.add_trace(go.Bar(
-            x=df_agrupado['terminal'],
-            y=df_agrupado['volume_total'],
-            name='Volume Total (Ton)',
-            marker_color='#ef476f',
-            yaxis='y2',
-            opacity=0.7
+            x=df_agrupado['terminal'], y=df_agrupado['volume_total'],
+            name='Volume (Ton)', marker_color='#ef476f', yaxis='y2', opacity=0.7
         ))
-
-        # Ajuste do Layout para dois eixos
         fig.update_layout(
             barmode='group',
             yaxis=dict(title='Quantidade de Navios'),
-            yaxis2=dict(title='Volume Total (Toneladas)', overlaying='y', side='right'),
+            yaxis2=dict(title='Volume Total (Ton)', overlaying='y', side='right'),
             legend=dict(x=0, y=1.1, orientation='h'),
-            margin=dict(l=20, r=20, t=20, b=20)
+            margin=dict(l=20, r=20, t=50, b=20)
         )
-
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("💡 Navios com volume não informado aparecem na contagem, mas não somam na tonelagem.")
 
     # --- ABA 2: RADAR GEOGRÁFICO ---
     with tab_radar:
@@ -208,6 +190,25 @@ try:
 
         except Exception as map_e:
             st.error(f"Erro ao renderizar o Radar: {map_e}")
+
+     # --- ABA 3: LINE-UP DETALHADO ---
+     with tab_detalhe:
+        st.subheader("🔍 Consulta Detalhada de Embarcações")
+        st.markdown("Lista completa de navios ativos com destaque para riscos climáticos.")
+        
+        # Filtro rápido na tabela
+        search = st.text_input("Filtrar por Navio ou Terminal:")
+        if search:
+            df_filtered = df_ships[df_ships.apply(lambda row: search.lower() in str(row).lower(), axis=1)]
+        else:
+            df_filtered = df_ships
+
+        # Exibição com estilo
+        st.dataframe(
+            df_filtered.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), 
+            use_container_width=True,
+            hide_index=True
+        )
 
 except Exception as e:
     st.error(f"Erro crítico na interface: {e}")
