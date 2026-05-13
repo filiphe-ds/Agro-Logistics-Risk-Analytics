@@ -62,18 +62,17 @@ def load_nlp_data():
 
 @st.cache_data(ttl=600)
 def load_map_data():
-    """Busca as coordenadas e as converte de STRING para GEOGRAPHY na query"""
     project = client.project
-    # Usamos ST_GEOGFROMTEXT para que o BigQuery entenda a coluna como coordenadas
     query = f"""
         SELECT 
             g.nome_ponto, 
             ST_Y(ST_GEOGFROMTEXT(g.coordenadas)) as lat, 
             ST_X(ST_GEOGFROMTEXT(g.coordenadas)) as lon, 
             g.tipo_ponto,
-            c.precipitacao_mm,
-            c.velocidade_vento,
-            c.alerta_critico
+            COALESCE(c.precipitacao_mm, 0) as precipitacao_mm,
+            COALESCE(c.velocidade_vento, 0) as velocidade_vento,
+            -- O segredo está aqui: Se for NULL, vira FALSE
+            COALESCE(c.alerta_critico, FALSE) as alerta_critico
         FROM `{project}.logisticsdata.dim_geografia_rota` g
         LEFT JOIN `{project}.logisticsdata.fato_clima` c ON g.loc_id = c.loc_id
         QUALIFY ROW_NUMBER() OVER (PARTITION BY g.loc_id ORDER BY c.timestamp_leitura DESC) = 1
