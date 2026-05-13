@@ -9,6 +9,10 @@ from streamlit_folium import st_folium
 import os
 from dotenv import load_dotenv
 
+# Inicialização de segurança
+df_ships = pd.DataFrame()
+nlp_event = None
+
 # 1. Configurações Iniciais
 load_dotenv()
 st.set_page_config(page_title="Agro-Logistics Risk Analytics v2.0", layout="wide")
