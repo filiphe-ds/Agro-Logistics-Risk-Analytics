@@ -96,8 +96,18 @@ st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em 
 # Usamos um try/except global para capturar erros de carregamento de dados
 try:
     # 1. Busca todos os dados necessários
-    df_ships = load_ship_data()
-    nlp_event = load_nlp_data()
+    try:
+    # 1. Busca os dados de forma independente
+    try:
+        nlp_event = load_nlp_data()
+    except:
+        nlp_event = None
+        
+    try:
+        df_ships = load_ship_data()
+    except Exception as e:
+        st.error(f"Erro ao carregar navios: {e}")
+        df_ships = pd.DataFrame()
 
     # --- Painel Superior: Status do Robô e Clima Logístico ---
     col_status_1, col_status_2 = st.columns(2)
