@@ -95,8 +95,6 @@ st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em 
 
 # Usamos um try/except global para capturar erros de carregamento de dados
 try:
-    # 1. Busca todos os dados necessários
-    try:
     # 1. Busca os dados de forma independente
     try:
         nlp_event = load_nlp_data()
