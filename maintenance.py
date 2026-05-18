@@ -4,21 +4,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Inicializa o cliente
 client = bigquery.Client(project=os.getenv("PROJECT_ID"))
 DATASET_FULL = "agrologisticsdata.logisticsdata"
 
 def renovar_validade():
-    # 1. Lista de Tabelas Físicas (Refresh via SELECT *)
-    tabelas = [
-        "fato_lineup",
-        "dim_navio",
-        "fato_clima",
-        "fato_contingencias_nlp",
-        "dim_geografia_rota"
-    ]
+    # 1. Tabelas com Particionamento e Clusterização (Exigem SQL específico)
+    tabelas_complexas = {
+        "fato_lineup": f"""
+            CREATE OR REPLACE TABLE `{DATASET_FULL}.fato_lineup`
+            PARTITION BY data_chegada_prevista
+            CLUSTER BY terminal, commodity
+            AS SELECT * FROM `{DATASET_FULL}.fato_lineup`
+        """,
+        "fato_clima": f"""
+            CREATE OR REPLACE TABLE `{DATASET_FULL}.fato_clima`
+            PARTITION BY DATE(timestamp_leitura)
+            CLUSTER BY loc_id
+            AS SELECT * FROM `{DATASET_FULL}.fato_clima`
+        """
+    }
 
-    # 2. Dicionário de Views (Refresh via SQL Original)
+    # 2. Tabelas Simples (SELECT * funciona direto)
+    tabelas_simples = ["dim_navio", "fato_contingencias_nlp", "dim_geografia_rota"]
+
+    # 3. Dicionário de Views
     views = {
         "view_feature_store_ml": f"""
             CREATE OR REPLACE VIEW `{DATASET_FULL}.view_feature_store_ml` AS
@@ -79,24 +88,32 @@ def renovar_validade():
         """
     }
 
-    # Execução para Tabelas
-    for tab in tabelas:
-        print(f"🔄 Renovando tabela: {tab}")
+    # --- EXECUÇÃO ---
+
+    for nome, sql in tabelas_complexas.items():
+        print(f"🔄 Renovando tabela complexa: {nome}")
+        try:
+            client.query(sql).result()
+            print(f"✅ {nome} renovada com sucesso (Mantendo Particionamento).")
+        except Exception as e:
+            print(f"❌ Erro em {nome}: {e}")
+
+    for tab in tabelas_simples:
+        print(f"🔄 Renovando tabela simples: {tab}")
         try:
             query = f"CREATE OR REPLACE TABLE `{DATASET_FULL}.{tab}` AS SELECT * FROM `{DATASET_FULL}.{tab}`"
             client.query(query).result()
-            print(f"✅ Tabela {tab} renovada.")
+            print(f"✅ {tab} renovada.")
         except Exception as e:
-            print(f"❌ Erro na tabela {tab}: {e}")
+            print(f"❌ Erro em {tab}: {e}")
 
-    # Execução para Views
-    for view_name, view_sql in views.items():
-        print(f"🔄 Renovando view: {view_name}")
+    for v_name, v_sql in views.items():
+        print(f"🔄 Renovando view: {v_name}")
         try:
-            client.query(view_sql).result()
-            print(f"✅ View {view_name} renovada.")
+            client.query(v_sql).result()
+            print(f"✅ {v_name} renovada.")
         except Exception as e:
-            print(f"❌ Erro na view {view_name}: {e}")
+            print(f"❌ Erro em {v_name}: {e}")
 
 if __name__ == "__main__":
     renovar_validade()
