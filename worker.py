@@ -41,17 +41,19 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro no carregamento de {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura (Versão Detetive): {datetime.now()}")
+    print(f"🚀 Iniciando captura (Versão Sniper): {datetime.now()}")
     
-    # 1. Busca mapeamento Nome -> IMO do BigQuery para não perder ninguém
-    print("🔍 Carregando dicionário de navios conhecidos...")
+    # 1. Carrega Dicionário de Navios (Ponte de Identidade)
+    print("🔍 Consultando dim_navio para mapeamento de nomes...")
     query_dim = f"SELECT ship_id, nome_navio FROM `{PROJECT_ID}.{DATASET_ID}.dim_navio`"
     try:
         df_conhecidos = client.query(query_dim).to_dataframe()
-        mapa_navios = dict(zip(df_conhecidos['nome_navio'].str.upper(), df_conhecidos['ship_id']))
-    except:
+        # Limpamos o nome para garantir o match (sem espaços, tudo maiúsculo)
+        mapa_navios = dict(zip(df_conhecidos['nome_navio'].str.strip().str.upper(), df_conhecidos['ship_id']))
+        print(f"✅ {len(mapa_navios)} navios conhecidos carregados.")
+    except Exception as e:
         mapa_navios = {}
-        print("⚠️ Não foi possível carregar dim_navio, usando apenas mapeamento local.")
+        print(f"⚠️ Erro ao carregar dicionário: {e}")
 
     fontes = [
         {"url": "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/", "status": "Esperado"},
@@ -63,61 +65,71 @@ def processar_operacao():
 
     try:
         for fonte in fontes:
-            print(f"🛰️ Tentando coletar: {fonte['status']}")
+            print(f"🛰️ Acessando: {fonte['status']}")
             res = requests.get(fonte['url'], headers=headers, verify=False, timeout=30)
             if res.status_code != 200: continue
             
             soup = BeautifulSoup(res.text, 'html.parser')
             tabelas_html = soup.find_all('table')
         
-            for tab in tabelas_html:
+            for i, tab in enumerate(tabelas_html):
                 try:
                     df_temp = pd.read_html(io.StringIO(str(tab)))[0]
                 except: continue
 
-                df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
+                # Limpeza agressiva: remove \n e espaços extras dos cabeçalhos
+                df_temp.columns = [str(c).replace('\n', ' ').strip().lower() for c in df_temp.columns]
                 
-                for _, row in df_temp.iterrows():
-                    def buscar(termos, default=None):
+                print(f"📊 Processando Tabela {i} de {fonte['status']} ({len(df_temp)} linhas)")
+
+                for idx, row in df_temp.iterrows():
+                    # Função de busca ultra-resiliente
+                    def buscar_valor(termos, col_index=None):
+                        # 1. Tenta por nome da coluna
                         for col in df_temp.columns:
                             if any(t in col for t in termos):
                                 return row[col]
-                        return default
+                        # 2. Se falhar e tivermos um índice fixo, usa o índice
+                        if col_index is not None and col_index < len(row):
+                            return row.iloc[col_index]
+                        return None
 
-                    # 1. Tenta pegar o IMO direto
-                    imo_val = str(buscar(['imo', 'nº']) or '').split('.')[0].strip()
-                    # 2. Pega o nome (Usando o termo 'burque' que você achou)
-                    nome_navio = str(buscar(['navio', 'ship', 'burque', 'nome']) or '').strip().upper()
+                    # ESTRATÉGIA: 
+                    # Esperados: Navio é col 0. Atracados: Navio é col 1.
+                    idx_navio = 0 if fonte['status'] == "Esperado" else 1
                     
-                    # 🚀 A MÁGICA: Se não tem IMO mas tem Nome, busca no mapa
-                    if (not imo_val or imo_val == 'nan') and nome_navio:
+                    nome_navio_raw = buscar_valor(['navio', 'ship', 'burque'], idx_navio)
+                    nome_navio = str(nome_navio_raw or '').strip().upper()
+                    
+                    # Tenta capturar o IMO (Geralmente só tem nos Esperados)
+                    imo_val = str(buscar_valor(['imo', 'nº', 'identificacao']) or '').split('.')[0].strip()
+                    
+                    # 🚀 A PONTE: Se não tem IMO (Página de Atracados), busca pelo Nome
+                    if (not imo_val or imo_val == 'nan' or len(imo_val) < 4) and nome_navio:
                         imo_val = mapa_navios.get(nome_navio, 'nan')
 
                     reg = {
                         'ship_id': imo_val,
                         'nome_navio': nome_navio,
-                        'tipo_vessel': buscar(['vessel', 'tipo', 'embarcacao']),
-                        'bandeira': buscar(['flag', 'bandeira']),
-                        'terminal': str(buscar(['terminal', 'local', 'cais']) or 'Area de Fundeio').strip(),
-                        'commodity': buscar(['mercadoria', 'produto', 'carga', 'commodity']),
-                        'quantidade_estimada': buscar(['peso', 'ton', 'quantidade'], 0),
-                        'data_chegada_prevista': buscar(['chegada', 'arrival', 'data', 'previsto']),
+                        'terminal': str(buscar_valor(['terminal', 'local', 'cais', 'berço']) or 'Area de Fundeio').strip(),
                         'status_atual': fonte['status'],
+                        'data_chegada_prevista': buscar_valor(['chegada', 'arrival', 'data', 'previsto']),
+                        'commodity': buscar_valor(['mercadoria', 'produto', 'carga']),
+                        'quantidade_estimada': buscar_valor(['peso', 'ton'], 0),
                         'inserido_em': datetime.utcnow()
                     }
                     
-                    # Se agora temos um IMO (vindo da página ou do mapa), salvamos!
                     if reg['ship_id'] and reg['ship_id'] != 'nan' and len(reg['ship_id']) >= 4:
-                        if reg['terminal'].isdigit() or '/' in reg['terminal'] or len(reg['terminal']) < 3:
-                            reg['terminal'] = "Área de Fundeio / Outros"
-                        
-                        # Atualiza o mapa local para próximos registros na mesma rodada
-                        mapa_navios[nome_navio] = reg['ship_id']
                         lista_final_registros.append(reg)
+                    else:
+                        # Log de debug para entendermos por que o navio foi ignorado
+                        if idx < 3: # Loga apenas os 3 primeiros para não inundar o GitHub
+                            print(f"   ⚠️ Ignorado: {nome_navio} (IMO não resolvido)")
 
         if not lista_final_registros: return
         
         df_final = pd.DataFrame(lista_final_registros)
+        # Prioriza Atracados no drop_duplicates
         df_final = df_final.sort_values('status_atual', ascending=True).drop_duplicates(subset=['ship_id'])
 
         # --- ENVIO FATO_LINEUP ---
