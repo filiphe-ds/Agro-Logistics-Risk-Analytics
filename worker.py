@@ -41,7 +41,7 @@ def safe_load_to_bq(df, table_name):
         print(f"❌ Erro no carregamento de {table_name}: {e}")
 
 def processar_operacao():
-    print(f"🚀 Iniciando captura (Versão Estabilizada): {datetime.now()}")
+    print(f"🚀 Iniciando captura (Versão Flexível): {datetime.now()}")
     
     fontes = [
         {"url": "https://www.portodesantos.com.br/informacoes-operacionais/operacoes-portuarias/navegacao-e-movimento-de-navios/navios-esperados-carga/", "status": "Esperado"},
@@ -55,61 +55,57 @@ def processar_operacao():
         for fonte in fontes:
             print(f"🛰️ Tentando coletar: {fonte['status']}")
             res = requests.get(fonte['url'], headers=headers, verify=False, timeout=30)
-            
-            if res.status_code != 200:
-                print(f"❌ Erro ao acessar URL de {fonte['status']}: Status {res.status_code}")
-                continue
+            if res.status_code != 200: continue
             
             soup = BeautifulSoup(res.text, 'html.parser')
             tabelas_html = soup.find_all('table')
         
-            if not tabelas_html:
-                print(f"⚠️ Nenhuma tabela encontrada para {fonte['status']}")
-                continue
-                
             for tab in tabelas_html:
-                # CORREÇÃO: Criar o df_temp para cada tabela encontrada
                 try:
                     df_temp = pd.read_html(io.StringIO(str(tab)))[0]
-                except:
-                    continue
+                except: continue
 
-                # Normalização de colunas
-                if isinstance(df_temp.columns, pd.MultiIndex):
-                    df_temp.columns = [limpar_nome_coluna(' '.join(col)) for col in df_temp.columns.values]
-                else:
-                    df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
-
+                # Normalização das colunas da tabela atual
+                df_temp.columns = [limpar_nome_coluna(c) for c in df_temp.columns]
+                
                 for _, row in df_temp.iterrows():
-                    # MAPEAMENTO DIRETO E RÍGIDO
+                    # --- Lógica de Mapeamento Flexível ---
+                    def buscar(termos):
+                        for col in df_temp.columns:
+                            if any(t in col for t in termos):
+                                return row[col]
+                        return None
+
+                    # Extração com múltiplas tentativas de nome de coluna
+                    imo_val = str(buscar(['imo', 'nº', 'identificacao']) or '').split('.')[0].strip()
+                    
                     reg = {
-                        'ship_id': str(row.get(next((c for c in df_temp.columns if 'imo' in c), ''))).split('.')[0],
-                        'nome_navio': row.get(next((c for c in df_temp.columns if 'navio_ship' in c), None)),
-                        'tipo_vessel': row.get(next((c for c in df_temp.columns if c.endswith('_nav')), None)),
-                        'bandeira': row.get(next((c for c in df_temp.columns if 'flag' in c), None)),
-                        'terminal': str(row.get(next((c for c in df_temp.columns if 'terminal' in c), ''))).strip(),
-                        'commodity': row.get(next((c for c in df_temp.columns if 'mercadoria' in c), None)),
-                        'quantidade_estimada': row.get(next((c for c in df_temp.columns if 'peso' in c), 0)),
-                        'data_chegada_prevista': row.get(next((c for c in df_temp.columns if 'chegarrival' in c), None)),
+                        'ship_id': imo_val,
+                        'nome_navio': buscar(['navio', 'ship', 'nome']),
+                        'tipo_vessel': buscar(['vessel', 'tipo', 'embarcacao']),
+                        'bandeira': buscar(['flag', 'bandeira']),
+                        'terminal': str(buscar(['terminal', 'local', 'cais']) or 'Area de Fundeio').strip(),
+                        'commodity': buscar(['mercadoria', 'produto', 'carga', 'commodity']),
+                        'quantidade_estimada': buscar(['peso', 'ton', 'quantidade'], 0),
+                        'data_chegada_prevista': buscar(['chegada', 'arrival', 'data', 'previsto']),
                         'status_atual': fonte['status'],
-                        'inserido_em': datetime.utcnow(),
-                        'capacidade_ton': 0.0
+                        'inserido_em': datetime.utcnow()
                     }
                     
-                    if reg['ship_id'] != 'nan' and len(reg['ship_id']) > 3:
+                    # Só adiciona se tiver um IMO válido (mínimo 4 dígitos)
+                    if reg['ship_id'] and reg['ship_id'] != 'nan' and len(reg['ship_id']) >= 4:
                         if reg['terminal'].isdigit() or '/' in reg['terminal'] or len(reg['terminal']) < 3:
                             reg['terminal'] = "Área de Fundeio / Outros"
                         lista_final_registros.append(reg)
 
-        if not lista_final_registros: return
+        if not lista_final_registros: 
+            print("⚠️ Nenhum registro processado nesta rodada.")
+            return
         
         df_final = pd.DataFrame(lista_final_registros)
-        # Deduplicação: Prioriza o status 'Atracado' se o navio aparecer nas duas listas
+        
+        # Deduplicação no Python antes de enviar para o banco (Prioriza Atracados)
         df_final = df_final.sort_values('status_atual', ascending=True).drop_duplicates(subset=['ship_id'])
-
-        # --- ENVIO DIM_NAVIO ---
-        df_dim = df_final[['ship_id', 'nome_navio', 'tipo_vessel', 'capacidade_ton', 'bandeira']].copy()
-        safe_load_to_bq(df_dim, "dim_navio")
 
         # --- ENVIO FATO_LINEUP ---
         df_final['data_chegada_prevista'] = pd.to_datetime(df_final['data_chegada_prevista'], dayfirst=True, errors='coerce').dt.date
@@ -117,7 +113,12 @@ def processar_operacao():
         
         colunas_fato = ['lineup_id', 'ship_id', 'data_chegada_prevista', 'status_atual', 'terminal', 'commodity', 'quantidade_estimada', 'inserido_em']
         df_fato = df_final[colunas_fato].copy()
-        df_fato['quantidade_estimada'] = pd.to_numeric(df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0.0)
+        
+        # Limpeza de peso (converte string "25.000,00" para float 25000.0)
+        df_fato['quantidade_estimada'] = pd.to_numeric(
+            df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), 
+            errors='coerce'
+        ).fillna(0.0)
         
         safe_load_to_bq(df_fato.dropna(subset=['data_chegada_prevista']), "fato_lineup")
 
