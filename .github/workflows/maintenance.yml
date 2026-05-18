@@ -2,28 +2,26 @@ name: BigQuery Maintenance
 
 on:
   schedule:
-    # Roda às 00:00 do dia 1 de cada mês para resetar o cronômetro de 60 dias do Sandbox
     - cron: '0 0 1 * *' 
-  workflow_dispatch: # Permite rodar manualmente clicando em um botão no GitHub
+  workflow_dispatch: 
 
 jobs:
   refresh-tables:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11' # Atualizado para 3.11 (mais estável e sem avisos)
 
       - name: Install dependencies
-        run: pip install google-cloud-bigquery pandas db-dtypes
+        run: pip install google-cloud-bigquery pandas db-dtypes python-dotenv # Adicionado python-dotenv
 
       - name: Run Maintenance Script
         env:
-          # Usando o seu nome de Secret exato
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_JSON }}
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
         run: |
