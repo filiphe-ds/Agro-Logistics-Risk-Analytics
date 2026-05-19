@@ -1,3 +1,12 @@
+Matou a charada, Filiphe! Peço desculpas pela confusão. Duas coisas aconteceram aqui que estavam quebrando a lógica e gerando as duplicatas:
+
+A Explosão do LEFT JOIN (Causa das Duplicatas): Mesmo com o QUALIFY filtrando as predições e os atracados, a tabela dim_navio recebe novos registros (WRITE_APPEND) toda vez que o robô roda. Ela está cheia de linhas duplicadas para o mesmo ship_id. Quando a view faz o LEFT JOIN nela, os dados multiplicam.
+
+O Escape do Python (\.0$ vs \\.0$): Para podermos usar a barra única idêntica ao seu console do BigQuery, mudei a string para uma Raw F-String (fr"""..."""). Isso evita que o Python tente interpretar a barra invertida do Regex.
+
+Aqui está o código do maintenance.py corrigido, com a view ajustada para deduplicar a dim_navio no momento do Join e com a indentação totalmente corrigida:
+
+Python
 import os
 from google.cloud import bigquery
 from dotenv import load_dotenv
@@ -27,9 +36,9 @@ def renovar_validade():
     # 2. Tabelas Simples (SELECT * funciona direto)
     tabelas_simples = ["dim_navio", "fato_contingencias_nlp", "dim_geografia_rota"]
 
-    # 3. Dicionário de Views
+    # 3. Dicionário de Views (Usando fr"" para aceitar a barra única do Regex)
     views = {
-        "view_feature_store_ml": f"""
+        "view_feature_store_ml": fr"""
             CREATE OR REPLACE VIEW `{DATASET_FULL}.view_feature_store_ml` AS
             WITH ultima_chuva AS (
                 SELECT precipitacao_mm as rain_feature, velocidade_vento as wind_feature
@@ -48,25 +57,25 @@ def renovar_validade():
                 (SELECT nlp_risk_score FROM ultimo_nlp) as nlp_risk_score
             FROM `{DATASET_FULL}.fato_lineup` f
         """,
-        "view_performance_ml": f"""
+        "view_performance_ml": fr"""
             CREATE OR REPLACE VIEW `{DATASET_FULL}.view_performance_ml` AS
             WITH predicoes AS (
                 SELECT 
-                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\\.0$', '') as clean_id,
+                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
                     data_chegada_prevista,
                     nlp_risk_score as prob_atraso_prevista,
                     inserido_em as data_predicao
                 FROM `{DATASET_FULL}.view_feature_store_ml`
                 WHERE ship_id IS NOT NULL
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\\.0$', '') ORDER BY inserido_em ASC) = 1
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
             ),
             realidade AS (
                 SELECT 
-                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\\.0$', '') as clean_id,
+                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
                     inserido_em as data_atracacao_real
                 FROM `{DATASET_FULL}.fato_lineup`
                 WHERE status_atual = 'Atracado'
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\\.0$', '') ORDER BY inserido_em ASC) = 1
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
             )
             SELECT 
                 p.clean_id,
@@ -84,7 +93,12 @@ def renovar_validade():
                 END) as erro_absoluto
             FROM predicoes p
             INNER JOIN realidade r ON p.clean_id = r.clean_id
-            LEFT JOIN `{DATASET_FULL}.dim_navio` d ON p.clean_id = d.ship_id
+            LEFT JOIN (
+                /* 🔥 CORREÇÃO DA EXPLOSÃO: Agrupa a dim_navio para garantir registros únicos */
+                SELECT ship_id, ANY_VALUE(nome_navio) as nome_navio
+                FROM `{DATASET_FULL}.dim_navio`
+                GROUP BY ship_id
+            ) d ON p.clean_id = d.ship_id
         """
     }
 
