@@ -48,7 +48,6 @@ def processar_operacao():
     query_dim = f"SELECT ship_id, nome_navio FROM `{PROJECT_ID}.{DATASET_ID}.dim_navio`"
     try:
         df_conhecidos = client.query(query_dim).to_dataframe()
-        # Limpamos o nome para garantir o match (sem espaços, tudo maiúsculo)
         mapa_navios = dict(zip(df_conhecidos['nome_navio'].str.strip().str.upper(), df_conhecidos['ship_id']))
         print(f"✅ {len(mapa_navios)} navios conhecidos carregados.")
     except Exception as e:
@@ -83,28 +82,23 @@ def processar_operacao():
                 print(f"📊 Processando Tabela {i} de {fonte['status']} ({len(df_temp)} linhas)")
 
                 for idx, row in df_temp.iterrows():
-                    # Função de busca ultra-resiliente
                     def buscar_valor(termos, col_index=None):
-                        # 1. Tenta por nome da coluna
                         for col in df_temp.columns:
                             if any(t in col for t in termos):
                                 return row[col]
-                        # 2. Se falhar e tivermos um índice fixo, usa o índice
                         if col_index is not None and col_index < len(row):
                             return row.iloc[col_index]
                         return None
 
-                    # ESTRATÉGIA: 
-                    # Esperados: Navio é col 0. Atracados: Navio é col 1.
+                    # Estratégia de Colunas por URL
                     idx_navio = 0 if fonte['status'] == "Esperado" else 1
                     
                     nome_navio_raw = buscar_valor(['navio', 'ship', 'burque'], idx_navio)
                     nome_navio = str(nome_navio_raw or '').strip().upper()
                     
-                    # Tenta capturar o IMO (Geralmente só tem nos Esperados)
                     imo_val = str(buscar_valor(['imo', 'nº', 'identificacao']) or '').split('.')[0].strip()
                     
-                    # 🚀 A PONTE: Se não tem IMO (Página de Atracados), busca pelo Nome
+                    # Ponte de Identidade pelo nome do Navio
                     if (not imo_val or imo_val == 'nan' or len(imo_val) < 4) and nome_navio:
                         imo_val = mapa_navios.get(nome_navio, 'nan')
 
@@ -122,14 +116,12 @@ def processar_operacao():
                     if reg['ship_id'] and reg['ship_id'] != 'nan' and len(reg['ship_id']) >= 4:
                         lista_final_registros.append(reg)
                     else:
-                        # Log de debug para entendermos por que o navio foi ignorado
-                        if idx < 3: # Loga apenas os 3 primeiros para não inundar o GitHub
+                        if idx < 3:
                             print(f"   ⚠️ Ignorado: {nome_navio} (IMO não resolvido)")
 
         if not lista_final_registros: return
         
         df_final = pd.DataFrame(lista_final_registros)
-        # Prioriza Atracados no drop_duplicates
         df_final = df_final.sort_values('status_atual', ascending=True).drop_duplicates(subset=['ship_id'])
 
         # --- ENVIO FATO_LINEUP ---
@@ -140,7 +132,13 @@ def processar_operacao():
         df_fato = df_final[colunas_fato].copy()
         df_fato['quantidade_estimada'] = pd.to_numeric(df_fato['quantidade_estimada'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0.0)
         
-        safe_load_to_bq(df_fato.dropna(subset=['data_chegada_prevista']), "fato_lineup")
+        # 🔥 AQUI ESTAVA O ERRO: Substituição do dropna por filtro condicional resiliente
+        df_fato_filtrado = df_fato[
+            ((df_fato['status_atual'] == 'Esperado') & (df_fato['data_chegada_prevista'].notna())) |
+            (df_fato['status_atual'] == 'Atracado')
+        ]
+        
+        safe_load_to_bq(df_fato_filtrado, "fato_lineup")
 
     except Exception as e:
         print(f"❌ Erro fatal: {e}")
