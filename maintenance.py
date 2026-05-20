@@ -1,12 +1,3 @@
-Matou a charada, Filiphe! Peço desculpas pela confusão. Duas coisas aconteceram aqui que estavam quebrando a lógica e gerando as duplicatas:
-
-A Explosão do LEFT JOIN (Causa das Duplicatas): Mesmo com o QUALIFY filtrando as predições e os atracados, a tabela dim_navio recebe novos registros (WRITE_APPEND) toda vez que o robô roda. Ela está cheia de linhas duplicadas para o mesmo ship_id. Quando a view faz o LEFT JOIN nela, os dados multiplicam.
-
-O Escape do Python (\.0$ vs \\.0$): Para podermos usar a barra única idêntica ao seu console do BigQuery, mudei a string para uma Raw F-String (fr"""..."""). Isso evita que o Python tente interpretar a barra invertida do Regex.
-
-Aqui está o código do maintenance.py corrigido, com a view ajustada para deduplicar a dim_navio no momento do Join e com a indentação totalmente corrigida:
-
-Python
 import os
 from google.cloud import bigquery
 from dotenv import load_dotenv
