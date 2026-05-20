@@ -49,51 +49,52 @@ def renovar_validade():
             FROM `{DATASET_FULL}.fato_lineup` f
         """,
         "view_performance_ml": fr"""
-            CREATE OR REPLACE VIEW `agrologisticsdata.logisticsdata.view_performance_ml` AS
-	    WITH predicoes AS (
-    	    	SELECT 
-        	    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
-        	    data_chegada_prevista,
-        	    nlp_risk_score as prob_atraso_prevista,
-        	    inserido_em as data_predicao
-    		FROM `agrologisticsdata.logisticsdata.view_feature_store_ml`
-    		WHERE ship_id IS NOT NULL
-    		QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
-	    ),
-	    realidade AS (
-    		SELECT 
-        	    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
-        	    inserido_em as data_atracacao_real,
-        	    terminal,
-        	    commodity
-    		FROM `agrologisticsdata.logisticsdata.fato_lineup`
-    		WHERE status_atual = 'Atracado'
-    		QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
-	    )
-	    SELECT 
-    		p.clean_id,
-    		d.nome_navio,
-    		r.terminal,   -- 🚀 Nova variável exposta para análise de performance
-    		r.commodity,  -- 🚀 Nova variável exposta para análise de performance
-    		p.data_chegada_prevista,
-    		r.data_atracacao_real,
-    		p.prob_atraso_prevista,
-    		-- 🕒 RECALIBRAÇÃO: Alterado de > 6 para > 24 horas (Janela comercial real)
-    	        CASE 
-        	    WHEN TIMESTAMP_DIFF(CAST(r.data_atracacao_real AS TIMESTAMP), CAST(p.data_chegada_prevista AS TIMESTAMP), HOUR) > 24 THEN 1 
-        	    ELSE 0 
-    	        END as ocorreu_atraso_real,
-    	        ABS(p.prob_atraso_prevista - CASE 
-        	    WHEN TIMESTAMP_DIFF(CAST(r.data_atracacao_real AS TIMESTAMP), CAST(p.data_chegada_prevista AS TIMESTAMP), HOUR) > 24 THEN 1 
-        	    ELSE 0 
-    	        END) as erro_absoluto
-	    FROM predicoes p
-	    INNER JOIN realidade r ON p.clean_id = r.clean_id
-	    LEFT JOIN (
-    		SELECT ship_id, ANY_VALUE(nome_navio) as nome_navio
-    		FROM `agrologisticsdata.logisticsdata.dim_navio`
-    		GROUP BY ship_id
-	    ) d ON p.clean_id = d.ship_id;
+            CREATE OR REPLACE VIEW `{DATASET_FULL}.view_performance_ml` AS
+            WITH predicoes AS (
+                SELECT 
+                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
+                    data_chegada_prevista,
+                    nlp_risk_score as prob_atraso_prevista,
+                    inserido_em as data_predicao
+                FROM `{DATASET_FULL}.view_feature_store_ml`
+                WHERE ship_id IS NOT NULL
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
+            ),
+            realidade AS (
+                SELECT 
+                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
+                    inserido_em as data_atracacao_real,
+                    terminal,
+                    commodity
+                FROM `{DATASET_FULL}.fato_lineup`
+                WHERE status_atual = 'Atracado'
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
+            )
+            SELECT 
+                p.clean_id,
+                d.nome_navio,
+                r.terminal,
+                r.commodity,
+                p.data_chegada_prevista,
+                r.data_atracacao_real,
+                p.prob_atraso_prevista,
+                CASE 
+                    WHEN TIMESTAMP_DIFF(CAST(r.data_atracacao_real AS TIMESTAMP), CAST(p.data_chegada_prevista AS TIMESTAMP), HOUR) > 24 THEN 1 
+                    ELSE 0 
+                END as ocorreu_atraso_real,
+                ABS(p.prob_atraso_prevista - CASE 
+                    WHEN TIMESTAMP_DIFF(CAST(r.data_atracacao_real AS TIMESTAMP), CAST(p.data_chegada_prevista AS TIMESTAMP), HOUR) > 24 THEN 1 
+                    ELSE 0 
+                END) as erro_absoluto
+            FROM predicoes p
+            INNER JOIN realidade r ON p.clean_id = r.clean_id
+            LEFT JOIN (
+                SELECT ship_id, ANY_VALUE(nome_navio) as nome_navio
+                FROM `{DATASET_FULL}.dim_navio`
+                GROUP BY ship_id
+            ) d ON p.clean_id = d.ship_id
+        """
+    }
 
     # --- EXECUÇÃO ---
 
