@@ -8,6 +8,7 @@ import folium
 from streamlit_folium import st_folium
 import os
 from dotenv import load_dotenv
+import plotly.graph_objects as go
 
 # Inicialização de segurança
 df_ships = pd.DataFrame()
@@ -44,7 +45,6 @@ def load_ship_data():
             FROM `{project}.logisticsdata.view_feature_store_ml`
         )
         WHERE clean_id IS NOT NULL
-        -- 🚀 CORREÇÃO DO FANTASMA: Filtra para manter estritamente as linhas da última varredura do robô (últimos 15 min do pico)
         AND inserido_em >= TIMESTAMP_SUB((SELECT MAX(inserido_em) FROM `{project}.logisticsdata.view_feature_store_ml`), INTERVAL 15 MINUTE)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY clean_id ORDER BY inserido_em DESC) = 1
     """
@@ -94,7 +94,6 @@ st.title("🚢 Agro-Logistics Risk Analytics v2.0")
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
 try:
-    # 1. Busca os dados de forma independente
     try:
         nlp_event = load_nlp_data()
     except:
@@ -132,43 +131,58 @@ try:
 
     # --- ABA 1: MONITOR DE OPERAÇÕES ---
     with tab_monitor:
-        col1, col2, col3, col4 = st.columns(4)
+        # Separação dos sub-datasets para os blocos visuais
+        df_atracados = df_ships[df_ships['status_atual'] == 'Atracado'] if not df_ships.empty else pd.DataFrame()
+        df_esperados = df_ships[df_ships['status_atual'] == 'Esperado'] if not df_ships.empty else pd.DataFrame()
+
+        # 1. KPIs Principais (Expandido para 5 blocos informativos)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Navios em Santos", len(df_ships))
+            st.metric("Atracados Agora", len(df_atracados))
         with col2:
-            st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm")
+            st.metric("Fila (Esperados)", len(df_esperados))
         with col3:
+            st.metric("Chuva Média (Porto)", f"{df_ships['rain_feature'].mean():.1f} mm" if not df_ships.empty else "0.0 mm")
+        with col4:
             risco_logistico = nlp_event['score_risco'] * 100 if nlp_event is not None else 0
             st.metric("Risco de Acessos", f"{risco_logistico:.0f}%")
-        with col4:
-            st.metric("Prob. Média Atraso", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%")
+        with col5:
+            st.metric("Prob. Média Atraso", f"{df_ships['nlp_risk_score'].mean()*100:.1f}%" if not df_ships.empty else "0.0%")
 
         st.divider()
 
-        st.subheader("📊 Atividade por Terminal: Fluxo vs. Volume")
-        df_agrupado = df_ships.groupby('terminal').agg(
-            qtd_navios=('ship_id', 'count'),
-            volume_total=('quantidade_estimada', 'sum')
-        ).reset_index().sort_values('qtd_navios', ascending=False)
+        # 2. Gráficos de Atividade Isolados Lado a Lado
+        col_graf_1, col_graf_2 = st.columns(2)
 
-        import plotly.graph_objects as go
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=df_agrupado['terminal'], y=df_agrupado['qtd_navios'],
-            name='Qtd. de Navios', marker_color='#0077b6', text=df_agrupado['qtd_navios'], textposition='auto'
-        ))
-        fig.add_trace(go.Bar(
-            x=df_agrupado['terminal'], y=df_agrupado['volume_total'],
-            name='Volume (Ton)', marker_color='#ef476f', yaxis='y2', opacity=0.7
-        ))
-        fig.update_layout(
-            barmode='group',
-            yaxis=dict(title='Quantidade de Navios'),
-            yaxis2=dict(title='Volume Total (Ton)', overlaying='y', side='right'),
-            legend=dict(x=0, y=1.1, orientation='h'),
-            margin=dict(l=20, r=20, t=50, b=20)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with col_graf_1:
+            st.markdown("### 🚢 Ocupação Atual (Navios Atracados)")
+            if not df_atracados.empty:
+                df_grp_atracados = df_atracados.groupby('terminal').agg(
+                    qtd=('ship_id', 'count'), vol=('quantidade_estimada', 'sum')
+                ).reset_index().sort_values('qtd', ascending=False)
+
+                fig1 = go.Figure()
+                fig1.add_trace(go.Bar(x=df_grp_atracados['terminal'], y=df_grp_atracados['qtd'], name='Qtd. Navios', marker_color='#023e8a', text=df_grp_atracados['qtd'], textposition='auto'))
+                fig1.add_trace(go.Bar(x=df_grp_atracados['terminal'], y=df_grp_atracados['vol'], name='Volume (Ton)', marker_color='#f72585', yaxis='y2', opacity=0.6))
+                fig1.update_layout(barmode='group', yaxis=dict(title='Qtd. Navios'), yaxis2=dict(title='Volume (Ton)', overlaying='y', side='right'), margin=dict(l=10, r=10, t=30, b=10), legend=dict(orientation='h', x=0, y=1.1))
+                st.plotly_chart(fig1, use_container_width=True)
+            else:
+                st.info("Nenhum navio atracado detectado no snapshot atual.")
+
+        with col_graf_2:
+            st.markdown("### ⏳ Pipeline de Ingestão (Navios Esperados)")
+            if not df_esperados.empty:
+                df_grp_esperados = df_esperados.groupby('terminal').agg(
+                    qtd=('ship_id', 'count'), vol=('quantidade_estimada', 'sum')
+                ).reset_index().sort_values('qtd', ascending=False)
+
+                fig2 = go.Figure()
+                fig2.add_trace(go.Bar(x=df_grp_esperados['terminal'], y=df_grp_esperados['qtd'], name='Qtd. Navios', marker_color='#00b4d8', text=df_grp_esperados['qtd'], textposition='auto'))
+                fig2.add_trace(go.Bar(x=df_grp_esperados['terminal'], y=df_grp_esperados['vol'], name='Volume (Ton)', marker_color='#7209b7', yaxis='y2', opacity=0.6))
+                fig2.update_layout(barmode='group', yaxis=dict(title='Qtd. Navios'), yaxis2=dict(title='Volume (Ton)', overlaying='y', side='right'), margin=dict(l=10, r=10, t=30, b=10), legend=dict(orientation='h', x=0, y=1.1))
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("Nenhum navio esperado na fila para os próximos dias.")
 
     # --- ABA 2: RADAR GEOGRÁFICO ---
     with tab_radar:
