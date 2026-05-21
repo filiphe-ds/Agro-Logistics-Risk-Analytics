@@ -62,13 +62,29 @@ def renovar_validade():
             ),
             realidade AS (
                 SELECT 
-                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
-                    inserido_em as data_atracacao_real,
-                    terminal,
-                    commodity
-                FROM `{DATASET_FULL}.fato_lineup`
-                WHERE status_atual = 'Atracado'
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
+                    r.clean_id,
+                    r.data_atracacao_real,
+                    r.terminal,
+                    c.commodity
+                FROM (
+                    /* 1. Captura a primeira foto do navio atracado para fixar data e terminal */
+                    SELECT 
+                        REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
+                        inserido_em as data_atracacao_real,
+                        terminal
+                    FROM `{DATASET_FULL}.fato_lineup`
+                    WHERE status_atual = 'Atracado'
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') ORDER BY inserido_em ASC) = 1
+                ) r
+                INNER JOIN (
+                    /* 2. Agrupa de forma tradicional para consolidar as mercadorias sem duplicar texto */
+                    SELECT 
+                        REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
+                        STRING_AGG(DISTINCT commodity, ', ') as commodity
+                    FROM `{DATASET_FULL}.fato_lineup`
+                    WHERE status_atual = 'Atracado'
+                    GROUP BY 1
+                ) c ON r.clean_id = c.clean_id
             )
             SELECT 
                 p.clean_id,
