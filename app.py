@@ -39,11 +39,13 @@ def load_ship_data():
             SELECT *, 
                    -- Normaliza o ID: transforma em String e remove o '.0'
                    REGEXP_REPLACE(CAST(ship_id AS STRING), r'\.0$', '') as clean_id,
-                   -- AJUSTE AQUI: Forçamos o CAST para TIMESTAMP para a função aceitar o fuso horário
+                   -- Forçamos o CAST para TIMESTAMP para a função aceitar o fuso horário
                    FORMAT_TIMESTAMP('%d/%m/%Y %H:%M', CAST(inserido_em AS TIMESTAMP), 'America/Sao_Paulo') as data_formatada
             FROM `{project}.logisticsdata.view_feature_store_ml`
         )
         WHERE clean_id IS NOT NULL
+        -- 🚀 CORREÇÃO DO FANTASMA: Filtra para manter estritamente as linhas da última varredura do robô (últimos 15 min do pico)
+        AND inserido_em >= TIMESTAMP_SUB((SELECT MAX(inserido_em) FROM `{project}.logisticsdata.view_feature_store_ml`), INTERVAL 15 MINUTE)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY clean_id ORDER BY inserido_em DESC) = 1
     """
     return client.query(query).to_dataframe()
@@ -71,7 +73,6 @@ def load_map_data():
             g.tipo_ponto,
             COALESCE(c.precipitacao_mm, 0) as precipitacao_mm,
             COALESCE(c.velocidade_vento, 0) as velocidade_vento,
-            -- O segredo está aqui: Se for NULL, vira FALSE
             COALESCE(c.alerta_critico, FALSE) as alerta_critico
         FROM `{project}.logisticsdata.dim_geografia_rota` g
         LEFT JOIN `{project}.logisticsdata.fato_clima` c ON g.loc_id = c.loc_id
@@ -92,7 +93,6 @@ def load_performance_data():
 st.title("🚢 Agro-Logistics Risk Analytics v2.0")
 st.markdown("Monitorização de Risco de Demurrage e Condições Logísticas em Tempo Real.")
 
-# Usamos um try/except global para capturar erros de carregamento de dados
 try:
     # 1. Busca os dados de forma independente
     try:
@@ -110,8 +110,7 @@ try:
     col_status_1, col_status_2 = st.columns(2)
     
     with col_status_1:
-    	if not df_ships.empty:
-        # Pegamos a data mais recente de toda a tabela para provar que o robô passou por aqui
+        if not df_ships.empty:
             ultima_atualizacao = df_ships['inserido_em'].max().strftime('%d/%m/%Y %H:%M')
             st.info(f"🤖 **Monitor de Navios:** Última varredura no Porto em {ultima_atualizacao}")
 
@@ -133,7 +132,6 @@ try:
 
     # --- ABA 1: MONITOR DE OPERAÇÕES ---
     with tab_monitor:
-        # 1. KPIs Principais
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Navios em Santos", len(df_ships))
@@ -147,7 +145,6 @@ try:
 
         st.divider()
 
-        # 2. Gráfico de Atividade (Fluxo vs Volume)
         st.subheader("📊 Atividade por Terminal: Fluxo vs. Volume")
         df_agrupado = df_ships.groupby('terminal').agg(
             qtd_navios=('ship_id', 'count'),
@@ -178,11 +175,8 @@ try:
         st.subheader("📍 Radar Geográfico de Ativos")
         try:
             df_map = load_map_data()
-            
-            # 1. Criamos o mapa base centrado em Santos
             m = folium.Map(location=[-23.95, -46.35], zoom_start=11, tiles="OpenStreetMap")
 
-            # 2. Adicionamos os pontos (POIs) do seu BigQuery
             for index, row in df_map.iterrows():
                 cor_ponto = "red" if row['alerta_critico'] else "blue"
                 icone = "cloud-showers-heavy" if row['alerta_critico'] else "ship"
@@ -201,9 +195,7 @@ try:
                     icon=folium.Icon(color=cor_ponto, icon=icone, prefix='fa')
                 ).add_to(m)
 
-            # 3. Exibimos o mapa no Streamlit
             st_folium(m, width=1200, height=500, returned_objects=[])
-            
             st.caption("🔵 Azul: Operação Normal | 🔴 Vermelho: Condições Críticas Detectadas")
 
         except Exception as map_e:
@@ -214,15 +206,12 @@ try:
         st.subheader("🔍 Consulta Detalhada de Embarcações")
         st.markdown("Lista completa de navios ativos com destaque para riscos climáticos.")
         
-        # Filtro rápido na tabela
         search = st.text_input("Filtrar por Navio ou Terminal:")
         if search:
-            # Filtro case-insensitive em todas as colunas
             df_filtered = df_ships[df_ships.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
         else:
             df_filtered = df_ships
 
-        # Exibição com estilo
         st.dataframe(
             df_filtered.style.highlight_max(axis=0, subset=['rain_feature'], color='#ff4b4b'), 
             use_container_width=True,
@@ -235,7 +224,6 @@ try:
         df_perf = load_performance_data()
 
         if not df_perf.empty:
-            # Cálculos de Performance
             mae = df_perf['erro_absoluto'].mean()
             acuracia = (1 - mae) * 100
             total_validados = len(df_perf)
@@ -250,10 +238,7 @@ try:
 
             st.divider()
 
-            # Gráfico de Predição vs Realidade
             st.write("### Histórico de Confronto: Predição vs Realidade")
-            
-            # Criando uma coluna visual para facilitar a leitura
             df_perf['Resultado'] = df_perf['ocorreu_atraso_real'].apply(lambda x: "🔴 Atrasou" if x == 1 else "🟢 No Prazo")
             
             st.dataframe(
@@ -271,10 +256,7 @@ except Exception as e:
 # --- SIDEBAR: SIMULADOR DE IA (FICA FORA DAS TABS) ---
 st.sidebar.header("🧠 Inteligência Artificial")
 try:
-    # Carregamento do Modelo de ML
     model = joblib.load('models/modelo_risco_demurrage_v1.pkl')
-    
-    # Injetamos o score real do NLP vindo do BigQuery (Fim do slider manual!)
     current_nlp_score = float(nlp_event['score_risco']) if nlp_event is not None else 0.0
     
     st.sidebar.markdown(f"📈 **Risco NLP Atual (Real):** `{current_nlp_score:.2f}`")
@@ -285,18 +267,13 @@ try:
     sim_chuva = st.sidebar.slider("Previsão de Chuva (mm)", 0, 100, 10)
     sim_vento = st.sidebar.slider("Velocidade do Vento (km/h)", 0, 50, 15)
     
-    # Botão para calcular a probabilidade baseada no modelo e no score real
     if st.sidebar.button("Calcular Risco Real"):
-        # Cria o input na ordem exata que o modelo Random Forest espera
         input_data = pd.DataFrame(
             [[sim_chuva, sim_vento, current_nlp_score, sim_carga]], 
             columns=['rain_feature', 'wind_feature', 'nlp_risk_score', 'quantidade_estimada']
         )
         
-        # Faz a previsão da probabilidade (classe 1 = Demurrage)
         prob = model.predict_proba(input_data)[0][1]
-        
-        # Exibe o resultado de forma visual
         st.sidebar.metric("Probabilidade de Demurrage", f"{prob:.1%}")
         
         if prob > 0.7: st.sidebar.error("⚠️ ALTO RISCO DE ATRASO")
