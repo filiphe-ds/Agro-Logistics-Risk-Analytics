@@ -64,7 +64,7 @@ O projeto utiliza uma estrutura moderna de **Modern Data Stack** focada em audit
 
 [x] Implementação de NLP e Modelo Preditivo v1.
 
-[x] Sistema de Auditoria de Performance e Backtesting.
+[ ] Sistema de Auditoria de Performance e Backtesting.
 
 [ ] Automação de Alertas proativos via Telegram/Webhooks.
 
